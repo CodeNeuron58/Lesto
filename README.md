@@ -63,4 +63,6 @@ Progress is tracked in [todo.md](todo.md).
 
 ## License
 
-No license yet, so all rights are reserved. The plan is to publish the engine under Apache 2.0, with a trademark note: the name "Quiff" is not covered by the license, and forks may not use it.
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice.
+
+The license covers the code, not the name. "Quiff" may not be used as the name of forks or other products (Section 6 of the license).
