@@ -1,8 +1,8 @@
 # Quiff
 
-*Computer use at the speed of thought.*
+*Fast hands for your AI.*
 
-Quiff is an open-source engine that drives Windows desktop apps and Chrome quickly. It reads the screen as structured data (the accessibility tree and the DOM) instead of screenshots. A small decision model picks each action, flows it has done before are replayed with no model call at all, and a large frontier model is called only when the engine is unsure.
+Quiff is an engine that drives Windows desktop apps and Chrome quickly. It reads the screen as structured data (the accessibility tree and the DOM) instead of screenshots. A small decision model picks each action, flows it has done before are replayed with no model call at all, and a large frontier model is called only when the engine is unsure.
 
 > **Status: pre-alpha.** Nothing works end to end yet. Scope for now is Windows and Chrome only.
 
@@ -63,4 +63,4 @@ Progress is tracked in [todo.md](todo.md).
 
 ## License
 
-Not chosen yet. Apache 2.0 is planned.
+No license yet, so all rights are reserved. The plan is to publish the engine under Apache 2.0, with a trademark note: the name "Quiff" is not covered by the license, and forks may not use it.
