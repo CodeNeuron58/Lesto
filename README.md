@@ -57,10 +57,6 @@ uv sync        # create .venv and install Quiff in editable mode
 uv run quiff   # run the CLI
 ```
 
-## Roadmap
-
-Progress is tracked in [todo.md](todo.md).
-
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice.

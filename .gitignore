@@ -9,3 +9,11 @@ wheels/
 # Virtual environments
 .venv
 plan/
+
+# Secrets and local data (API keys, run logs, screen recordings)
+.env
+.env.*
+*.log
+logs/
+runs/
+.DS_Store

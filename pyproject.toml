@@ -6,10 +6,14 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [
-    { name = "Biprayan Choudhuri", email = "biprayanchoudhuri58@gmail.com" }
+    { name = "Biprayan Choudhuri", email = "hi@quiff.si" }
 ]
 requires-python = ">=3.11"
 dependencies = []
+
+[project.urls]
+Homepage = "https://quiff.si"
+Repository = "https://github.com/CodeNeuron58/quiff"
 
 [project.scripts]
 quiff = "quiff.cli:main"
