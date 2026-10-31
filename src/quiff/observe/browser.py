@@ -185,6 +185,17 @@ class BrowserObserver:
         info = await self._target_info()
         return await self._read(title=info.get("title", ""), url=info.get("url", ""))
 
+    def connection(self) -> CDPConnection:
+        """The live DevTools connection, for the acting stage's input commands."""
+        if self._cdp is None:
+            raise BrowserError("no open tab; call open() first")
+        return self._cdp
+
+    async def wait_settled(self) -> None:
+        """Bounded wait for the document to stop churning after an action."""
+        if self._cdp is not None:
+            await self._settle()
+
     async def stop(self) -> None:
         if self._cdp:
             await self._cdp.__aexit__(None, None, None)
@@ -251,7 +262,8 @@ class BrowserObserver:
         except urllib.error.URLError as exc:
             raise BrowserError(f"could not reach Chrome's debugger: {exc.reason}") from None
 
-    async def _target_info(self) -> dict:
+    async def target_info(self) -> dict:
+        """The current tab's DevTools entry: id, title, url."""
         with urllib.request.urlopen(
             f"http://127.0.0.1:{self.port}/json/list", timeout=10.0
         ) as response:
@@ -260,6 +272,9 @@ class BrowserObserver:
             if target.get("id") == self._target_id:
                 return target
         return {}
+
+    async def _target_info(self) -> dict:
+        return await self.target_info()
 
     async def _settle(self) -> None:
         """Wait until the document reports a settled readyState (bounded)."""

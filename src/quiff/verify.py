@@ -3,3 +3,73 @@
 Waits on UI events instead of fixed sleeps, and stops the same action
 repeating on the same screen.
 """
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import re
+import time
+
+from .observe.browser import BrowserObserver
+
+
+async def wait_for(predicate, *, timeout: float = 10.0, interval: float = 0.1) -> bool:
+    """Poll a plain-code predicate until it holds or the timeout passes.
+
+    Real UI-event waits arrive with the desktop stage; browser pages settle via
+    the observer's readyState wait, so polling plain code is honest for now.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        result = predicate()
+        if inspect.isawaitable(result):
+            result = await result
+        if result:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(interval)
+
+
+class Page:
+    """Plain-code views of the browser page the checks wait on."""
+
+    def __init__(self, observer: BrowserObserver) -> None:
+        self._observer = observer
+
+    async def url(self) -> str:
+        try:
+            return (await self._observer.target_info()).get("url", "")
+        except Exception:
+            return ""
+
+    async def title(self) -> str:
+        try:
+            return (await self._observer.target_info()).get("title", "")
+        except Exception:
+            return ""
+
+
+async def wait_url(observer: BrowserObserver, pattern: str, *, timeout: float = 15.0) -> bool:
+    """Wait until the page URL matches a regular expression."""
+    compiled = re.compile(pattern)
+    page = Page(observer)
+    return await wait_for(lambda: compiled.search(page.url()) is not None, timeout=timeout)
+
+
+class LoopDetector:
+    """Stops the same action firing on the same screen over and over."""
+
+    def __init__(self, limit: int = 3) -> None:
+        self._limit = limit
+        self._recent: list[tuple[str, str, str]] = []
+
+    def check(self, action: str, ref: str, screen: str) -> bool:
+        """Record one step; True when the same action+row+screen hit the limit."""
+        self._recent.append((action, ref, screen))
+        self._recent[:] = self._recent[-self._limit:]
+        if len(self._recent) < self._limit:
+            return False
+        first = self._recent[0]
+        return all(entry == first for entry in self._recent)
