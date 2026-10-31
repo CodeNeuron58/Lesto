@@ -1,0 +1,309 @@
+# Quiff task suite: first 20 tasks (10 browser, 10 desktop). Format and check types: README.md.
+# dev = may tune on these. hidden = only for gates and published numbers.
+
+# ---------------------------------------------------------------- browser: dev
+
+[[task]]
+id = "b01-google-search"
+app = "chrome"
+split = "dev"
+goal = "Search Google for 'langchain'."
+start = { url = "https://www.google.com" }
+
+[[task.check]]
+type = "url"
+pattern = '^https://www\.google\.[a-z.]+/search\?.*q=langchain'
+
+[[task]]
+id = "b02-wikipedia-article"
+app = "chrome"
+split = "dev"
+goal = "Open the Wikipedia article about Kolkata using the site's search box."
+start = { url = "https://en.wikipedia.org" }
+
+[[task.check]]
+type = "url"
+pattern = '^https://en\.wikipedia\.org/wiki/Kolkata$'
+
+[[task]]
+id = "b03-wikipedia-fact"
+app = "chrome"
+split = "dev"
+goal = "Find on Wikipedia the year the Python programming language first appeared, and answer with the year."
+start = { url = "https://en.wikipedia.org" }
+
+[[task.check]]
+type = "answer"
+pattern = '\b1991\b'
+
+[[task]]
+id = "b04-order-form"
+app = "chrome"
+split = "dev"
+goal = "Fill in the pizza order form: name Asha Rao, phone 9876543210, email asha@example.com, size medium, toppings cheese and onion, comments 'Ring the bell'. Then submit it."
+start = { url = "https://httpbin.org/forms/post" }
+notes = "Form batching test: everything is on one screen. 'Submit order' should trigger the approval guard."
+
+[[task.check]]
+type = "page_text"
+contains = '"custname": "Asha Rao"'
+
+[[task.check]]
+type = "page_text"
+contains = '"size": "medium"'
+
+[[task.check]]
+type = "page_text"
+contains = '"comments": "Ring the bell"'
+
+[[task]]
+id = "b05-test-login"
+app = "chrome"
+split = "dev"
+goal = "Log in to the test site with username tomsmith and password SuperSecretPassword!"
+start = { url = "https://the-internet.herokuapp.com/login" }
+notes = "Public test site; the credentials are printed on the page. Not a real account."
+
+[[task.check]]
+type = "url"
+pattern = '/secure$'
+
+[[task.check]]
+type = "page_text"
+contains = "You logged into a secure area!"
+
+# ---------------------------------------------------------------- browser: hidden
+
+[[task]]
+id = "b06-dropdown"
+app = "chrome"
+split = "hidden"
+goal = "Choose 'Option 2' in the dropdown."
+start = { url = "https://the-internet.herokuapp.com/dropdown" }
+
+[[task.check]]
+type = "dom"
+selector = "#dropdown"
+property = "value"
+equals = "2"
+
+[[task]]
+id = "b07-checkboxes"
+app = "chrome"
+split = "hidden"
+goal = "Make sure both checkboxes are ticked."
+start = { url = "https://the-internet.herokuapp.com/checkboxes" }
+notes = "Checkbox 2 starts ticked; clicking it would untick it."
+
+[[task.check]]
+type = "dom"
+selector = "#checkboxes input:nth-of-type(1)"
+property = "checked"
+equals = true
+
+[[task.check]]
+type = "dom"
+selector = "#checkboxes input:nth-of-type(2)"
+property = "checked"
+equals = true
+
+[[task]]
+id = "b08-github-license"
+app = "chrome"
+split = "hidden"
+goal = "Find which license the GitHub repository CodeNeuron58/quiff uses, and answer with its name."
+start = { url = "https://github.com" }
+
+[[task.check]]
+type = "answer"
+pattern = '(?i)apache.*2\.0'
+
+[[task]]
+id = "b09-pypi-version"
+app = "chrome"
+split = "hidden"
+goal = "Find the latest version number of the httpx package on PyPI, and answer with just the version."
+start = { url = "https://pypi.org" }
+notes = "The exact version changes over time; the checker may compare with https://pypi.org/pypi/httpx/json at run time."
+
+[[task.check]]
+type = "answer"
+pattern = '^\d+\.\d+\.\d+$'
+
+[[task]]
+id = "b10-download-file"
+app = "chrome"
+split = "hidden"
+goal = "Download the plain-text Apache License 2.0 file from apache.org."
+start = { url = "https://www.apache.org/licenses/" }
+
+[[task.check]]
+type = "file"
+glob = "~/Downloads/LICENSE-2.0*.txt"
+contains = "Apache License"
+created_after_start = true
+
+# ---------------------------------------------------------------- desktop: dev
+
+[[task]]
+id = "d01-notepad-save"
+app = "notepad"
+split = "dev"
+goal = "Write 'Hello from Quiff' in Notepad and save it as hello.txt in the task folder."
+start = { app = "notepad" }
+
+[[task.check]]
+type = "file"
+path = "hello.txt"
+equals = "Hello from Quiff"
+
+[[task]]
+id = "d02-new-folder"
+app = "explorer"
+split = "dev"
+goal = "Create a folder called invoices in the task folder."
+start = { app = "explorer", folder = "." }
+
+[[task.check]]
+type = "dir"
+path = "invoices"
+
+[[task]]
+id = "d03-rename-file"
+app = "explorer"
+split = "dev"
+goal = "Rename draft.txt to final.txt."
+start = { app = "explorer", folder = "." }
+
+[task.setup.files]
+"draft.txt" = "Quarterly report draft"
+
+[[task.check]]
+type = "file"
+path = "final.txt"
+equals = "Quarterly report draft"
+
+[[task.check]]
+type = "missing"
+path = "draft.txt"
+
+[[task]]
+id = "d04-excel-total"
+app = "excel"
+split = "dev"
+goal = "Open sales.csv in Excel, add a last row with 'Total' in column A and the sum of the Amount column in column B, and save it as CSV."
+start = { app = "excel", file = "sales.csv" }
+
+[task.setup.files]
+"sales.csv" = """Item,Amount
+Pens,120
+Paper,450
+Ink,980
+"""
+
+[[task.check]]
+type = "csv"
+path = "sales.csv"
+last_row = ["Total", "1550"]
+
+[[task]]
+id = "d05-calculator"
+app = "calculator"
+split = "dev"
+goal = "Use Calculator to work out 18% of 12500, and answer with the result."
+start = { app = "calculator" }
+
+[[task.check]]
+type = "answer"
+pattern = '^2,?250(\.0+)?$'
+
+# ---------------------------------------------------------------- desktop: hidden
+
+[[task]]
+id = "d06-outlook-calendar"
+app = "outlook"
+split = "hidden"
+goal = "In Outlook, switch from Mail to the Calendar view."
+start = { app = "outlook" }
+
+[[task.check]]
+type = "window_title"
+pattern = '^Calendar - .* - Outlook$'
+
+[[task]]
+id = "d07-move-file"
+app = "explorer"
+split = "hidden"
+goal = "Move report.txt into the archive folder."
+start = { app = "explorer", folder = "." }
+
+[task.setup]
+dirs = ["archive"]
+
+[task.setup.files]
+"report.txt" = "Monthly report"
+
+[[task.check]]
+type = "file"
+path = "archive/report.txt"
+equals = "Monthly report"
+
+[[task.check]]
+type = "missing"
+path = "report.txt"
+
+[[task]]
+id = "d08-excel-sort"
+app = "excel"
+split = "hidden"
+goal = "Open marks.csv in Excel, sort the rows by Score from highest to lowest (keep the header on top), and save it as CSV."
+start = { app = "excel", file = "marks.csv" }
+
+[task.setup.files]
+"marks.csv" = """Name,Score
+Asha,72
+Ravi,91
+Meera,85
+"""
+
+[[task.check]]
+type = "csv"
+path = "marks.csv"
+rows = [["Name", "Score"], ["Ravi", "91"], ["Meera", "85"], ["Asha", "72"]]
+
+[[task]]
+id = "d09-notepad-replace"
+app = "notepad"
+split = "hidden"
+goal = "Open notes.txt in Notepad, replace every 'DRAFT' with 'FINAL', and save."
+start = { app = "notepad", file = "notes.txt" }
+
+[task.setup.files]
+"notes.txt" = """Status: DRAFT
+Review: DRAFT
+"""
+
+[[task.check]]
+type = "file"
+path = "notes.txt"
+equals = """Status: FINAL
+Review: FINAL"""
+
+[[task]]
+id = "d10-zip-folder"
+app = "explorer"
+split = "hidden"
+goal = "Compress the photos folder into a zip file called photos.zip."
+start = { app = "explorer", folder = "." }
+
+[task.setup]
+dirs = ["photos"]
+
+[task.setup.files]
+"photos/beach.txt" = "placeholder image 1"
+"photos/hills.txt" = "placeholder image 2"
+
+[[task.check]]
+type = "zip"
+path = "photos.zip"
+contains_files = ["beach.txt", "hills.txt"]
