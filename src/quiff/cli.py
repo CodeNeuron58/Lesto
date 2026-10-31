@@ -118,11 +118,13 @@ def _script_for(task) -> list[MatchStep]:
 
         target = sandbox_dir(task) / "hello.txt"
         return [
-            MatchStep("type", "edit", "", ("Hello from Quiff",)),
+            MatchStep("type", "document", "", ("Hello from Quiff",)),
             MatchStep("press", values=("ctrl+s",)),
             # The Save-As dialog becomes the app's front window; the loop reads it next.
             MatchStep("type", "edit", "file name", (str(target),)),
             MatchStep("press", values=("Enter",)),
+            # Only appears when the target file already exists.
+            MatchStep("click", "button", "yes", optional=True),
         ]
     for task_id, steps in scripts.items():
         if task.id == task_id or task.id.startswith(task_id):

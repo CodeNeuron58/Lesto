@@ -120,20 +120,22 @@ class DesktopObserver:
         self._baseline: set[int] = set()
         self._launched = False
 
-    async def open(self, argv: list[str]) -> ActionTable:
+    async def open(self, argv: list[str], *, cwd: str | None = None) -> ActionTable:
         """Start a program, wait for its window, and read it.
 
         Store apps (Notepad on Windows 11) launch through a stub process that
         exits at once, so we attach to whatever window newly appears instead of
         trusting the child process id. The baseline also keeps the observer on
         OUR windows only: the app's process may serve the user's windows too.
+        `cwd` also becomes the save dialogs' default folder, keeping test saves
+        out of whatever directory Quiff itself was started from.
         """
         if self._process is None:
             before = set(_visible_windows())
             self._baseline = before
             self._launched = True
             self._process = subprocess.Popen(
-                argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             self._hwnd = await self._wait_for_new_window(before)
             self._pid = _pid_of(self._hwnd)
@@ -169,7 +171,9 @@ class DesktopObserver:
         )
 
     async def wait_settled(self) -> None:
-        await asyncio.sleep(0.4)
+        # Dialogs (Save As, prompts) take a moment to build their trees; give
+        # them a beat so the next read sees the dialog, not the old window.
+        await asyncio.sleep(1.0)
 
     def current_hwnd(self) -> int | None:
         try:
@@ -186,20 +190,22 @@ class DesktopObserver:
         is answered with Don't save.
         """
         if self._launched and self._pid:
-            ours = [w for w in _top_windows_of_pid(self._pid) if w not in self._baseline]
-            for hwnd in ours:
+            for hwnd in [w for w in _top_windows_of_pid(self._pid) if w not in self._baseline]:
                 user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline and ours:
-                await asyncio.sleep(0.4)
-                for hwnd in list(ours):
-                    if _window_title(hwnd) and not user32.IsWindow(hwnd):
-                        ours.remove(hwnd)
-                        continue
-                    self._answer_dont_save(hwnd)
-                ours = [w for w in ours if user32.IsWindow(w)]
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+                # re-scan: prompts and confirm dialogs can appear in cascade
+                ours = [
+                    w
+                    for w in _top_windows_of_pid(self._pid)
+                    if w not in self._baseline and user32.IsWindow(w)
+                ]
                 if not ours:
                     break
+                for hwnd in ours:
+                    self._answer_dont_save(hwnd)
+                    user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
         if self._process:
             self._process.terminate()
             try:
@@ -212,9 +218,11 @@ class DesktopObserver:
         self._launched = False
 
     def _answer_dont_save(self, hwnd: int) -> None:
-        """Click Don't save on a save prompt, whether it is a separate dialog or in-window."""
+        """Click Don't save / No on a prompt of ours, whether it is a separate
+        dialog (Confirm Save As) or drawn inside the window."""
         try:
             element = uia.ElementFromHandle(hwnd)
+            window_title = _window_title(hwnd).lower()
             buttons = element.FindAll(
                 UIA.TreeScope_Descendants,
                 uia.CreatePropertyCondition(
@@ -223,11 +231,12 @@ class DesktopObserver:
             )
         except Exception:
             return
+        wanted = {"don't save", "dont save", "close without saving"}
+        if "confirm save as" in window_title:
+            wanted.add("no")  # our junk must not overwrite anything
         for i in range(buttons.Length):
             button = buttons.GetElement(i)
-            if (button.CurrentName or "").strip().lower().replace("`", "'") in (
-                "don't save", "dont save", "close without saving"
-            ):
+            if (button.CurrentName or "").strip().lower().replace("`", "'") in wanted:
                 try:
                     pattern = button.GetCurrentPattern(UIA.UIA_InvokePatternId)
                     if pattern:

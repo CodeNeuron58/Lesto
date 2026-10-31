@@ -287,10 +287,14 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         if value is not None:
             try:
                 value.SetValue(text)
-                return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
+                # Some controls (common-dialog file boxes) accept SetValue but
+                # ignore it; verify, or the dialog saves under the old name.
+                if (value.Value or "") == text:
+                    return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
             except Exception:
                 pass
         element.SetFocus()
+        _select_all_desktop()
         _type_text(observer, text)
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
 
@@ -337,6 +341,14 @@ def _press_combo(observer, combo: str) -> None:
 def _type_text(observer, text: str) -> None:
     for char in text:
         _send_unicode(char)
+
+
+def _select_all_desktop() -> None:
+    """Ctrl+A so typing replaces whatever the control already held."""
+    _send_key(VK_MODIFIERS["ctrl"])
+    _send_key(ord("A"))
+    _send_key(ord("A"), keyup=True)
+    _send_key(VK_MODIFIERS["ctrl"], keyup=True)
 
 
 class _KEYBDINPUT(ctypes.Structure):

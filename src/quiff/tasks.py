@@ -162,7 +162,9 @@ async def run_task(
     if task.app == "chrome":
         result = await loop.run(task.goal, start_url=_start_url(task), subgoal=task.goal)
     else:
-        await observer.open(desktop_argv(task))
+        from quiff.observe.desktop import DesktopObserver
+
+        await observer.open(desktop_argv(task), cwd=str(sandbox))
         result = await loop.run(task.goal, subgoal=task.goal)
     page = ObserverPage(observer) if task.app == "chrome" else None
     checks = await run_checks(

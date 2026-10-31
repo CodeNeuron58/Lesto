@@ -85,6 +85,9 @@ class MatchStep:
     name_contains: str = ""
     values: tuple[str, ...] = ()
     answer: str | None = None
+    optional: bool = False
+    """When no row matches, skip silently instead of failing (e.g. a confirm
+    dialog that only sometimes appears)."""
 
 
 class MatchDecider:
@@ -119,5 +122,9 @@ class MatchDecider:
                     subgoal_done=False,
                     note=f"match {step.role_contains!r}/{step.name_contains!r}",
                 )
+        if step.optional:
+            return Decision(action="done", subgoal_done=True,
+                            note=f"optional step skipped: no row matches "
+                                 f"{step.role_contains!r}/{step.name_contains!r}")
         return Decision(action="done", subgoal_done=False, confidence=0.0,
                         note=f"no row matches {step.role_contains!r}/{step.name_contains!r}")
