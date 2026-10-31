@@ -19,6 +19,7 @@ from .decide import Decision, Decider
 from .learn import StepLogger
 from .loop import FastLoop, LoopResult
 from .observe.browser import BrowserObserver, BrowserError
+from .recall import FlowRecorder
 
 TASKS_FILE = Path(__file__).resolve().parent.parent.parent / "tasks" / "tasks.toml"
 
@@ -174,9 +175,14 @@ async def run_task(
         sandbox=sandbox,
         started_ts=started_ts,
     )
+    success = bool(result.success and all(item.ok for item in checks))
+    if isinstance(decider, FlowRecorder):
+        saved = decider.save_if_ran(success)
+        if saved:
+            logger.log({"kind": "flow_saved", "path": str(saved)})
     logger.run_summary(
         {
-            "success": bool(result.success and all(item.ok for item in checks)),
+            "success": success,
             "steps": result.steps,
             "elapsed_s": result.elapsed_s,
             "stop_reason": result.stop_reason,

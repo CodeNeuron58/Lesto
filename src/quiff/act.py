@@ -285,15 +285,16 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         text = " ".join(decision.values)
         value = _pattern(element, "Value")
         if value is not None:
-            try:
-                value.SetValue(text)
-                # Some controls (common-dialog file boxes) accept SetValue but
-                # ignore it; verify, or the dialog saves under the old name.
-                if (value.Value or "") == text:
-                    return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
-            except Exception:
-                pass
+            for _ in range(3):
+                try:
+                    value.SetValue(text)
+                    time.sleep(0.1)
+                    if (value.Value or "") == text:
+                        return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
+                except Exception:
+                    pass
         element.SetFocus()
+        _force_foreground(observer)
         _select_all_desktop()
         _type_text(observer, text)
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
@@ -325,9 +326,7 @@ def _press_combo(observer, combo: str) -> None:
     parts = [part.strip().lower() for part in combo.split("+") if part.strip()]
     modifiers = [VK_MODIFIERS[p] for p in parts if p in VK_MODIFIERS]
     keys = [p for p in parts if p not in VK_MODIFIERS]
-    hwnd = observer.current_hwnd()
-    if hwnd:
-        user32.SetForegroundWindow(hwnd)
+    _force_foreground(observer)
     for vk in modifiers:
         _send_key(vk)
     for key in keys:
@@ -336,6 +335,27 @@ def _press_combo(observer, combo: str) -> None:
         _send_key(vk, keyup=True)
     for vk in reversed(modifiers):
         _send_key(vk, keyup=True)
+
+
+def _force_foreground(observer) -> None:
+    """Put the app's window in front before keyboard events.
+
+    Windows refuses SetForegroundWindow from a background process; tapping Alt
+    first is the standard unlock. Without this, a keystroke can land on
+    whatever window the user actually had in front.
+    """
+    from .observe.desktop import user32
+
+    hwnd = observer.current_hwnd()
+    if not hwnd:
+        return
+    for _ in range(3):
+        if user32.GetForegroundWindow() == hwnd:
+            return
+        user32.keybd_event(0x12, 0, 0, 0)  # Alt down
+        user32.SetForegroundWindow(hwnd)
+        user32.keybd_event(0x12, 0, 0x0002, 0)  # Alt up
+        time.sleep(0.2)
 
 
 def _type_text(observer, text: str) -> None:
@@ -383,4 +403,4 @@ def _send_unicode(char: str) -> None:
     _send_input(item)
     item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
     _send_input(item)
-    time.sleep(0.005)  # without a beat, Windows drops rapid unicode events
+    time.sleep(0.015)  # without a beat, Windows drops rapid unicode events

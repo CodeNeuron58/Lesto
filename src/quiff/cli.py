@@ -20,6 +20,8 @@ def main() -> None:
     run.add_argument("task_id", help="task id or prefix, e.g. b01")
     run.add_argument("--headed", action="store_true", help="show the browser window")
     run.add_argument("--max-steps", type=int, default=25)
+    run.add_argument("--replay", action="store_true",
+                     help="replay the recorded flow with no model calls (recall stage)")
 
     observe = commands.add_parser("observe", help="print the action table for a URL")
     observe.add_argument("url")
@@ -57,10 +59,16 @@ async def _dispatch(args: argparse.Namespace) -> None:
 
     if args.command == "run":
         from quiff.decide import MatchDecider, MatchStep
+        from quiff.recall import FlowRecorder
         from quiff.tasks import get_task, load_tasks, run_task
 
         task = get_task(args.task_id, load_tasks())
-        decider = MatchDecider(_script_for(task))
+        if args.replay:
+            from quiff.recall import ReplayDecider, load_flow
+
+            decider = ReplayDecider(load_flow(task.id))
+        else:
+            decider = FlowRecorder(MatchDecider(_script_for(task)), task.id, task.goal)
         if task.app == "chrome":
             from quiff.observe.browser import BrowserObserver
 
@@ -74,6 +82,8 @@ async def _dispatch(args: argparse.Namespace) -> None:
         finally:
             await observer.stop()
         print(f"task     {run.task.id} ({run.task.split})")
+        mode = "replay" if args.replay else "scripted"
+        print(f"mode     {mode}")
         print(f"steps    {run.loop.steps} · {run.loop.elapsed_s}s · {run.loop.stop_reason}")
         if run.loop.answer:
             print(f"answer   {run.loop.answer}")

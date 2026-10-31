@@ -76,6 +76,11 @@ def _process_name(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _owner_of(hwnd: int) -> int:
+    """The window's owner (GW_OWNER), or 0 for unowned top-level windows."""
+    return user32.GetWindow(hwnd, 4) or 0  # 4 = GW_OWNER
+
+
 def _pid_of(hwnd: int) -> int:
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
@@ -117,6 +122,7 @@ class DesktopObserver:
         self._process: subprocess.Popen | None = None
         self._pid: int | None = None
         self._hwnd: int | None = None
+        self._root_hwnd: int | None = None
         self._baseline: set[int] = set()
         self._launched = False
 
@@ -137,8 +143,10 @@ class DesktopObserver:
             self._process = subprocess.Popen(
                 argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+            self._pid = self._process.pid
             self._hwnd = await self._wait_for_new_window(before)
             self._pid = _pid_of(self._hwnd)
+            self._root_hwnd = self._hwnd
             user32.SetForegroundWindow(self._hwnd)
             # Warm-up: WinUI and Chromium-based apps build their tree lazily; ask
             # once, give it a beat, and the real read gets the full picture.
@@ -153,6 +161,7 @@ class DesktopObserver:
             raise DesktopError("no foreground window")
         self._hwnd = hwnd
         self._pid = _pid_of(hwnd)
+        self._root_hwnd = hwnd
         self._baseline = set(_visible_windows()) - {hwnd}
 
     async def read(self) -> ActionTable:
@@ -189,8 +198,13 @@ class DesktopObserver:
         enough — the windows themselves get a close message, and any save prompt
         is answered with Don't save.
         """
-        if self._launched and self._pid:
-            for hwnd in [w for w in _top_windows_of_pid(self._pid) if w not in self._baseline]:
+        if self._launched and self._root_hwnd:
+            # Close only our window and dialogs owned by it. Other windows of
+            # the same process belong to the user and are never touched.
+            ours = [self._root_hwnd] + [
+                w for w in _top_windows_of_pid(self._pid) if _owner_of(w) == self._root_hwnd
+            ]
+            for hwnd in ours:
                 user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
             deadline = time.monotonic() + 8.0
             while time.monotonic() < deadline:
@@ -198,8 +212,9 @@ class DesktopObserver:
                 # re-scan: prompts and confirm dialogs can appear in cascade
                 ours = [
                     w
-                    for w in _top_windows_of_pid(self._pid)
-                    if w not in self._baseline and user32.IsWindow(w)
+                    for w in [self._root_hwnd]
+                    + [w for w in _top_windows_of_pid(self._pid) if _owner_of(w) == self._root_hwnd]
+                    if user32.IsWindow(w)
                 ]
                 if not ours:
                     break
@@ -248,19 +263,25 @@ class DesktopObserver:
     # ------------------------------------------------------------------ internals
 
     def _current_window(self) -> int:
-        """The front-most window of ours: one the app opened after our baseline."""
-        assert self._pid
-        ours = [
-            hwnd
-            for hwnd in _top_windows_of_pid(self._pid)
-            if hwnd not in self._baseline
-        ]
-        if not ours:
-            raise DesktopError(f"the app's window is gone (pid {self._pid})")
-        front = user32.GetForegroundWindow()
-        if front in ours:
-            return front
-        return ours[-1]
+        """Our window, or a dialog owned by it — never another window of the
+        same process.
+
+        Single-process apps (Notepad on Windows 11) put every window in one
+        process, including windows the USER opens while we run. Process id is
+        therefore not a safety boundary; ownership is. Only the window we
+        launched and its owned dialogs are ever read or acted on.
+        """
+        root = self._root_hwnd
+        if root is None or not user32.IsWindow(root):
+            raise DesktopError("our window is gone")
+        if user32.IsWindowVisible(root) and _pid_of(root) == self._pid:
+            front = user32.GetForegroundWindow()
+            if front == root or _owner_of(front) == root:
+                return front
+        owned = [w for w in _top_windows_of_pid(self._pid) if _owner_of(w) == root]
+        if owned:
+            return owned[-1]
+        return root
 
     async def _wait_for_new_window(self, before: set[int], timeout: float = 20.0) -> int:
         deadline = time.monotonic() + timeout
@@ -273,7 +294,18 @@ class DesktopObserver:
             if titled:
                 return titled[-1]
             await asyncio.sleep(0.3)
-        raise DesktopError(f"no new window appeared within {timeout:.0f}s after launching")
+        same_process = [w for w in _visible_windows() if self._pid and _pid_of(w) == self._pid]
+        if same_process:
+            raise DesktopError(
+                "no new window appeared, but the app was already running — the new "
+                "document may have opened as a tab in the user's window. Close the "
+                "app's other windows first so Quiff gets a window of its own."
+            )
+        raise DesktopError(
+            f"no new window appeared within {timeout:.0f}s after launching. If the app "
+            "was already open, the new document may have opened inside the user's "
+            "window — close other windows of that app so Quiff gets one of its own."
+        )
 
     def _read_window(self, hwnd: int) -> list[ActionRow]:
         window = uia.ElementFromHandle(hwnd)
@@ -290,13 +322,27 @@ class DesktopObserver:
         enabled = uia.CreatePropertyCondition(UIA.UIA_IsEnabledPropertyId, True)
         condition = uia.CreateAndCondition(onscreen, uia.CreateAndCondition(enabled, any_pattern))
 
-        elements = window.FindAllBuildCache(UIA.TreeScope_Descendants, condition, cache)
+        # Windows and their controls change under us; a read can hit a
+        # momentary COM error. Retry twice before giving up.
+        elements = None
+        for attempt in range(3):
+            try:
+                elements = window.FindAllBuildCache(UIA.TreeScope_Descendants, condition, cache)
+                break
+            except comtypes.COMError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.3)
         rows: list[ActionRow] = []
         for i in range(elements.Length):
-            element = elements.GetElement(i)
-            name = (element.CachedName or "").strip()
-            role = (element.CachedLocalizedControlType or "?").lower()
-            patterns = [p for p, pid in PATTERNS.items() if element.GetCachedPropertyValue(pid)]
+            try:
+                element = elements.GetElement(i)
+                name = (element.CachedName or "").strip()
+                role = (element.CachedLocalizedControlType or "?").lower()
+                patterns = [p for p, pid in PATTERNS.items() if element.GetCachedPropertyValue(pid)]
+                automation_id = element.CachedAutomationId or ""
+            except comtypes.COMError:
+                continue  # the control vanished mid-read
             actions = tuple(dict.fromkeys(a for p in patterns for a in PATTERN_ACTIONS[p]))
             if not actions or (not name and role not in UNNAMED_OK):
                 continue
@@ -309,7 +355,7 @@ class DesktopObserver:
                     enabled=True,
                     ref=f"{role}='{name[:24]}'",
                     target={
-                        "automation_id": element.CachedAutomationId or "",
+                        "automation_id": automation_id,
                         "name": name,
                         "role": role,
                     },

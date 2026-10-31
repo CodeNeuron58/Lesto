@@ -15,7 +15,7 @@ from typing import Protocol, Sequence
 
 from .observe.table import ActionTable
 
-ACTIONS = ("click", "type", "select", "press", "done", "answer")
+ACTIONS = ("click", "type", "select", "press", "done", "answer", "wait")
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,7 @@ from .observe.table import ActionTable
 from .verify import LoopDetector
 
 MAX_STEPS = 25
+MAX_WAITS = 5
 
 
 @dataclass
@@ -89,11 +90,25 @@ class FastLoop:
 
         stop_reason = "max steps reached"
         success = False
+        waits = 0
 
         for step_no in range(1, self.max_steps + 1):
             decide_start = time.perf_counter()
             decision = await self.decider.decide(goal, subgoal or "", table, history)
             decide_ms = int((time.perf_counter() - decide_start) * 1000)
+
+            if decision.action == "wait":
+                # The decider expects a screen that isn't there yet (a dialog
+                # still building); re-observe instead of acting.
+                waits += 1
+                if waits > MAX_WAITS:
+                    stop_reason = "waited too long for the expected screen"
+                    self._log(step_no, decision, None, table, decide_ms, observe_ms)
+                    break
+                self._log(step_no, decision, None, table, decide_ms, observe_ms)
+                await self.observer.wait_settled()
+                table = await self.observer.read()
+                continue
 
             if decision.action == "done":
                 success = bool(decision.subgoal_done is not False)
