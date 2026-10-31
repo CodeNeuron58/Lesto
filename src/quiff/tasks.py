@@ -125,29 +125,46 @@ class TaskRun:
         return self.loop.success and all(result.ok for result in self.checks)
 
 
+def desktop_argv(task: Task) -> list[str]:
+    """The command that starts the task's app, with the sandbox file or folder if given."""
+    commands = {
+        "notepad": ["notepad.exe"],
+        "explorer": ["explorer.exe"],
+        "calculator": ["calc.exe"],
+        "excel": ["excel.exe"],
+        "outlook": ["olk.exe"],
+    }
+    argv = list(commands.get(task.app, [task.app]))
+    sandbox = sandbox_dir(task)
+    if task.start.get("file"):
+        argv.append(str(sandbox / task.start["file"]))
+    elif task.start.get("folder"):
+        folder = task.start["folder"]
+        argv.append(str(sandbox if folder == "." else sandbox / folder))
+    return argv
+
+
 async def run_task(
     task: Task,
     decider: Decider,
-    observer: BrowserObserver,
+    observer,
     *,
     run_root: Path | None = None,
     max_steps: int = 25,
 ) -> TaskRun:
-    """Run one browser task: sandbox, loop, then the automatic checks."""
-    if task.app != "chrome":
-        raise BrowserError(f"task {task.id} runs in {task.app}; only chrome tasks run for now")
+    """Run one task: sandbox, loop, then the automatic checks."""
     sandbox = setup_sandbox(task)
     run_dir = (run_root or Path("runs")) / f"{time.strftime('%Y-%m-%d-%H%M%S')}-{task.id}"
     logger = StepLogger(run_dir, task.id)
     started_ts = time.time()
 
     loop = FastLoop(observer, decider, logger, max_steps=max_steps)
-    result = await loop.run(
-        task.goal,
-        start_url=_start_url(task),
-        subgoal=task.goal,
-    )
-    page = ObserverPage(observer)
+    if task.app == "chrome":
+        result = await loop.run(task.goal, start_url=_start_url(task), subgoal=task.goal)
+    else:
+        await observer.open(desktop_argv(task))
+        result = await loop.run(task.goal, subgoal=task.goal)
+    page = ObserverPage(observer) if task.app == "chrome" else None
     checks = await run_checks(
         task.checks,
         answer=result.answer,

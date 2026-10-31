@@ -58,11 +58,17 @@ async def _dispatch(args: argparse.Namespace) -> None:
     if args.command == "run":
         from quiff.decide import MatchDecider, MatchStep
         from quiff.tasks import get_task, load_tasks, run_task
-        from quiff.observe.browser import BrowserObserver
 
         task = get_task(args.task_id, load_tasks())
         decider = MatchDecider(_script_for(task))
-        observer = BrowserObserver(headless=not args.headed)
+        if task.app == "chrome":
+            from quiff.observe.browser import BrowserObserver
+
+            observer = BrowserObserver(headless=not args.headed)
+        else:
+            from quiff.observe.desktop import DesktopObserver
+
+            observer = DesktopObserver()
         try:
             run = await run_task(task, decider, observer, max_steps=args.max_steps)
         finally:
@@ -106,6 +112,18 @@ def _script_for(task) -> list[MatchStep]:
             MatchStep("click", "button", "login"),
         ],
     }
+    # Desktop: d01 — type into Notepad's document, save into the sandbox via the dialog.
+    if task.app != "chrome":
+        from quiff.tasks import sandbox_dir
+
+        target = sandbox_dir(task) / "hello.txt"
+        return [
+            MatchStep("type", "edit", "", ("Hello from Quiff",)),
+            MatchStep("press", values=("ctrl+s",)),
+            # The Save-As dialog becomes the app's front window; the loop reads it next.
+            MatchStep("type", "edit", "file name", (str(target),)),
+            MatchStep("press", values=("Enter",)),
+        ]
     for task_id, steps in scripts.items():
         if task.id == task_id or task.id.startswith(task_id):
             return steps

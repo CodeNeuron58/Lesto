@@ -7,6 +7,7 @@ browser; real mouse and keyboard input is the fallback. Anything irreversible
 
 from __future__ import annotations
 
+import ctypes
 import time
 from dataclasses import dataclass
 
@@ -18,7 +19,7 @@ from .observe.table import ActionRow
 RISKY_WORDS = ("send", "pay", "submit", "delete", "post", "approve", "transfer", "confirm",
                "place order", "checkout")
 # Keyboard shortcuts that trigger the same words (e.g. Ctrl+Enter sends in Outlook).
-RISKY_KEYS = ("ctrl+enter", "ctrl+s", "ctrl+d", "shift+delete")
+RISKY_KEYS = ("ctrl+enter", "ctrl+d", "shift+delete")
 
 
 @dataclass
@@ -47,18 +48,23 @@ def needs_approval(decision: Decision, table: ActionTable) -> str | None:
     return None
 
 
-async def act(observer: BrowserObserver, table: ActionTable, decision: Decision) -> ActResult:
+async def act(observer, table: ActionTable, decision: Decision) -> ActResult:
     """Perform the decision's action on the page; never raises, reports via ActResult."""
     started = time.perf_counter()
     try:
-        result = await _act(observer, table, decision)
-    except BrowserError as exc:
-        result = ActResult(ok=False, detail=f"devtools error: {exc}")
+        if hasattr(observer, "connection"):  # browser observer
+            result = await _act_browser(observer, table, decision)
+        else:  # desktop observer
+            result = _act_desktop(observer, table, decision)
+    except Exception as exc:
+        result = ActResult(ok=False, detail=f"error: {exc}")
     result.ms = int((time.perf_counter() - started) * 1000)
     return result
 
 
-async def _act(observer: BrowserObserver, table: ActionTable, decision: Decision) -> ActResult:
+# --------------------------------------------------------------------- browser
+
+async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: Decision) -> ActResult:
     cdp = observer.connection()
 
     if decision.action == "press":
@@ -221,3 +227,148 @@ async def _select_option(cdp, row: ActionRow, option: str) -> bool:
         returnByValue=True,
     )
     return bool(result.get("result", {}).get("value"))
+
+
+# --------------------------------------------------------------------- desktop
+
+# Virtual-key codes for the keys Quiff may press.
+VK_CODES = {
+    "enter": 0x0D, "tab": 0x09, "escape": 0x1B, "backspace": 0x08, "space": 0x20,
+    "arrowup": 0x26, "arrowdown": 0x28, "arrowleft": 0x25, "arrowright": 0x27,
+    "pageup": 0x21, "pagedown": 0x22, "home": 0x24, "end": 0x23,
+}
+VK_MODIFIERS = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}
+
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+INPUT_KEYBOARD = 1
+
+
+def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
+    """Accessibility patterns first (Invoke, SetValue...); the keyboard is the fallback."""
+    if decision.action == "press":
+        combo = " ".join(decision.values).strip() or "enter"
+        _press_combo(observer, combo)
+        return ActResult(ok=True, detail=f"pressed {combo}")
+
+    if decision.action in ("done", "answer"):
+        return ActResult(ok=True, detail=decision.action)
+
+    row = table.by_index(decision.row) if decision.row is not None else None
+    if row is None:
+        return ActResult(ok=False, detail=f"row {decision.row} not in the table")
+    element = observer.find_row_element(row.target)
+    if element is None:
+        return ActResult(ok=False, detail=f"row {decision.row} vanished from the window")
+
+    if decision.action == "click":
+        for name, verb in (("Invoke", "invoked"), ("Toggle", "toggled"),
+                           ("SelectionItem", "selected"), ("ExpandCollapse", "expanded")):
+            pattern = _pattern(element, name)
+            if pattern is None:
+                continue
+            try:
+                if name == "Invoke":
+                    pattern.Invoke()
+                elif name == "Toggle":
+                    pattern.Toggle()
+                elif name == "SelectionItem":
+                    pattern.Select()
+                else:
+                    pattern.Expand()
+                return ActResult(ok=True, detail=f"{verb} [{decision.row}] {row.role} \"{row.name}\"")
+            except Exception:
+                continue
+        return ActResult(ok=False, detail=f"no working pattern on [{decision.row}] {row.name!r}")
+
+    if decision.action == "type":
+        text = " ".join(decision.values)
+        value = _pattern(element, "Value")
+        if value is not None:
+            try:
+                value.SetValue(text)
+                return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
+            except Exception:
+                pass
+        element.SetFocus()
+        _type_text(observer, text)
+        return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
+
+    return ActResult(ok=False, detail=f"unknown action {decision.action!r}")
+
+
+def _pattern(element, name: str):
+    """The pattern object for one capability, cast to its real interface.
+
+    GetCurrentPattern returns IUnknown; comtypes needs an explicit
+    QueryInterface before Invoke/SetValue work. None when unsupported.
+    """
+    from .observe.desktop import UIA
+
+    unknown = element.GetCurrentPattern(getattr(UIA, f"UIA_{name}PatternId"))
+    if unknown is None:
+        return None
+    try:
+        return unknown.QueryInterface(getattr(UIA, f"IUIAutomation{name}Pattern"))
+    except Exception:
+        return None
+
+
+def _press_combo(observer, combo: str) -> None:
+    """Press e.g. 'ctrl+s' or 'enter' on the app's foreground window."""
+    from .observe.desktop import user32
+
+    parts = [part.strip().lower() for part in combo.split("+") if part.strip()]
+    modifiers = [VK_MODIFIERS[p] for p in parts if p in VK_MODIFIERS]
+    keys = [p for p in parts if p not in VK_MODIFIERS]
+    hwnd = observer.current_hwnd()
+    if hwnd:
+        user32.SetForegroundWindow(hwnd)
+    for vk in modifiers:
+        _send_key(vk)
+    for key in keys:
+        vk = VK_CODES.get(key) or (ord(key.upper()[:1]) if key else 0)
+        _send_key(vk)
+        _send_key(vk, keyup=True)
+    for vk in reversed(modifiers):
+        _send_key(vk, keyup=True)
+
+
+def _type_text(observer, text: str) -> None:
+    for char in text:
+        _send_unicode(char)
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort),
+                ("dwFlags", ctypes.c_uint), ("time", ctypes.c_uint),
+                ("dwExtraInfo", ctypes.c_void_p)]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("ki", _KEYBDINPUT), ("padding", ctypes.c_ubyte * 32)]
+
+    _anonymous_ = ("u",)
+    _fields_ = [("type", ctypes.c_uint), ("u", _U)]
+
+
+def _send_input(input_struct: _INPUT) -> None:
+    import ctypes as ct
+
+    ct.windll.user32.SendInput(1, ct.byref(input_struct), ct.sizeof(_INPUT))
+
+
+def _send_key(vk: int, keyup: bool = False) -> None:
+    item = _INPUT(type=INPUT_KEYBOARD)
+    item.ki = _KEYBDINPUT(wVk=vk, dwFlags=KEYEVENTF_KEYUP if keyup else 0)
+    _send_input(item)
+
+
+def _send_unicode(char: str) -> None:
+    item = _INPUT(type=INPUT_KEYBOARD)
+    item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE)
+    _send_input(item)
+    item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+    _send_input(item)
+    time.sleep(0.005)  # without a beat, Windows drops rapid unicode events
