@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 plan/
+context/
 
 # Secrets and local data (API keys, run logs, screen recordings)
 .env
