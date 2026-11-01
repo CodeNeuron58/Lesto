@@ -54,18 +54,21 @@ class FastLoop:
 
     def __init__(
         self,
-        observer: BrowserObserver,
+        observer,
         decider: Decider,
         logger: StepLogger | None = None,
         *,
         max_steps: int = MAX_STEPS,
         rescuer: Decider | None = None,
+        approver=None,
     ) -> None:
         self.observer = observer
         self.decider = decider
         self.logger = logger
         self.max_steps = max_steps
         self.rescuer = rescuer
+        self.approver = approver
+        """async callable (reason) -> bool; the only way past the approval guard."""
 
     async def run(
         self,
@@ -152,9 +155,19 @@ class FastLoop:
 
             approval_reason = needs_approval(decision, table)
             if approval_reason:
-                stop_reason = f"needs approval: {approval_reason}"
-                self._log(step_no, decision, None, table, decide_ms, observe_ms)
-                break
+                approved = False
+                if self.approver is not None:
+                    try:
+                        approved = bool(await self.approver(approval_reason))
+                    except Exception:
+                        approved = False
+                if not approved:
+                    stop_reason = f"needs approval: {approval_reason}"
+                    self._log(step_no, decision, None, table, decide_ms, observe_ms)
+                    break
+                decision = replace(
+                    decision, note=f"{decision.note} · approved by user".strip(" ·")
+                )
 
             result = await act(self.observer, table, decision)
             history.append(decision)
@@ -175,10 +188,11 @@ class FastLoop:
 
             ref = table.by_index(decision.row).ref if decision.row else decision.action
             if detector.check(decision.action, ref or "", table.title):
-                if self.rescuer is not None:
-                    force_rescue = True
+                if self.rescuer is not None and not force_rescue:
+                    force_rescue = True  # one rescue attempt per detected loop
                 else:
-                    stop_reason = "loop detected: same action on the same screen"
+                    stop_reason = ("loop detected: the same actions repeat even "
+                                   "after rescue")
                     success = False
                     break
 

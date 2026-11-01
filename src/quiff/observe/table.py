@@ -33,6 +33,9 @@ class ActionRow:
     value: str | None = None
     """Current text for editable controls, else None."""
 
+    state: str | None = None
+    """Toggle state for checkboxes/radios: checked, unchecked, mixed."""
+
     ref: str = ""
     """Stable id built from role + name + parent path (roles joined by <)."""
 
@@ -61,6 +64,8 @@ class ActionTable:
             line = f'[{row.index}] {row.role} "{_clean(row.name, NAME_LIMIT)}"'
             if row.value is not None:
                 line += f' · value="{_clean(row.value, VALUE_LIMIT)}"'
+            if row.state:
+                line += f" · {row.state}"
             if not row.enabled:
                 line += " · disabled"
             lines.append(line)

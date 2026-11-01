@@ -26,6 +26,8 @@ def main() -> None:
                      help="use the model-free stand-in instead of Muse Spark")
     run.add_argument("--effort", default="minimal",
                      help="Muse Spark reasoning effort for decisions (default: minimal)")
+    run.add_argument("--interactive", action="store_true",
+                     help="ask in the terminal before irreversible actions")
 
     observe = commands.add_parser("observe", help="print the action table for a URL")
     observe.add_argument("url")
@@ -89,9 +91,19 @@ async def _dispatch(args: argparse.Namespace) -> None:
             from quiff.observe.desktop import DesktopObserver
 
             observer = DesktopObserver()
+        approver = None
+        if args.interactive:
+            import asyncio as _aio
+
+            async def approver(reason: str) -> bool:
+                prompt = "APPROVAL NEEDED: " + reason + " — Approve? y/n: "
+                answer = await _aio.to_thread(input, prompt)
+                return answer.strip().lower().startswith("y")
+
         try:
             run = await run_task(task, decider, observer, max_steps=args.max_steps,
-                                 rescuer=rescuer if not args.replay and not args.scripted else None)
+                                 rescuer=rescuer if not args.replay and not args.scripted else None,
+                                 approver=approver)
         finally:
             await observer.stop()
         print(f"task     {run.task.id} ({run.task.split})")

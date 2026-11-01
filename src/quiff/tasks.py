@@ -155,6 +155,7 @@ async def run_task(
     run_root: Path | None = None,
     max_steps: int = 25,
     rescuer: Decider | None = None,
+    approver=None,
 ) -> TaskRun:
     """Run one task: sandbox, loop, then the automatic checks."""
     sandbox = setup_sandbox(task)
@@ -165,7 +166,8 @@ async def run_task(
     if task.app != "chrome":
         _preflight_desktop_app(task)
 
-    loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer)
+    loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer,
+                    approver=approver)
     if task.app == "chrome":
         result = await loop.run(task.goal, start_url=_start_url(task), subgoal=task.goal)
     else:

@@ -347,9 +347,15 @@ def _table_rows(nodes: list[dict]) -> list[ActionRow]:
             return
         here = path if role in PASS_THROUGH else path + [(role, name)]
         actions = ROLE_ACTIONS.get(role)
-        if actions and not _property(node, "disabled") and (name or role in UNNAMED_OK):
+        if actions and not _is_disabled(node) and (name or role in UNNAMED_OK):
             value = node.get("value") or {}
             text = value.get("value") if isinstance(value, dict) else None
+            state = None
+            if role in ("checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"):
+                checked = _property(node, "checked")
+                state = "mixed" if checked == "mixed" else (
+                    "checked" if checked and checked != "false" else "unchecked"
+                )
             rows.append(
                 ActionRow(
                     index=len(rows) + 1,
@@ -358,6 +364,7 @@ def _table_rows(nodes: list[dict]) -> list[ActionRow]:
                     actions=actions,
                     enabled=True,
                     value=text if isinstance(text, str) else None,
+                    state=state,
                     ref=path_ref(here),
                     target=node.get("backendDOMNodeId"),
                 )
@@ -376,12 +383,17 @@ def _role_name(node: dict) -> str:
     return str(role_field.get("value") or role_field.get("type") or "")
 
 
-def _property(node: dict, name: str) -> bool:
+def _property(node: dict, name: str):
     for prop in node.get("properties") or []:
         if prop.get("name") == name:
             value = prop.get("value") or {}
-            return bool(value.get("value")) if isinstance(value, dict) else bool(value)
-    return False
+            return value.get("value") if isinstance(value, dict) else value
+    return None
+
+
+def _is_disabled(node: dict) -> bool:
+    checked = _property(node, "disabled")
+    return bool(checked)
 
 
 def _find_chrome() -> str:
