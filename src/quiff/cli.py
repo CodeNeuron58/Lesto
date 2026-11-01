@@ -22,6 +22,10 @@ def main() -> None:
     run.add_argument("--max-steps", type=int, default=25)
     run.add_argument("--replay", action="store_true",
                      help="replay the recorded flow with no model calls (recall stage)")
+    run.add_argument("--scripted", action="store_true",
+                     help="use the model-free stand-in instead of Muse Spark")
+    run.add_argument("--effort", default="minimal",
+                     help="Muse Spark reasoning effort for decisions (default: minimal)")
 
     observe = commands.add_parser("observe", help="print the action table for a URL")
     observe.add_argument("url")
@@ -67,8 +71,14 @@ async def _dispatch(args: argparse.Namespace) -> None:
             from quiff.recall import ReplayDecider, load_flow
 
             decider = ReplayDecider(load_flow(task.id))
-        else:
+        elif args.scripted:
             decider = FlowRecorder(MatchDecider(_script_for(task)), task.id, task.goal)
+        else:
+            from quiff.models.meta import MuseDecider
+
+            rescuer = MuseDecider(effort="high")
+            decider = FlowRecorder(MuseDecider(effort=args.effort), task.id, task.goal)
+            print(f"brain    MuseDecider ({args.effort}) + rescue on high")
         if task.app == "chrome":
             from quiff.observe.browser import BrowserObserver
 
@@ -78,11 +88,12 @@ async def _dispatch(args: argparse.Namespace) -> None:
 
             observer = DesktopObserver()
         try:
-            run = await run_task(task, decider, observer, max_steps=args.max_steps)
+            run = await run_task(task, decider, observer, max_steps=args.max_steps,
+                                 rescuer=rescuer if not args.replay and not args.scripted else None)
         finally:
             await observer.stop()
         print(f"task     {run.task.id} ({run.task.split})")
-        mode = "replay" if args.replay else "scripted"
+        mode = ("replay" if args.replay else "scripted") if args.scripted or args.replay else "model"
         print(f"mode     {mode}")
         print(f"steps    {run.loop.steps} · {run.loop.elapsed_s}s · {run.loop.stop_reason}")
         if run.loop.answer:

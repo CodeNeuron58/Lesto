@@ -22,6 +22,7 @@ from pathlib import Path
 
 import httpx
 
+from ..decide import Decision
 from ..observe.table import ActionTable
 
 
