@@ -216,11 +216,30 @@ class BrowserObserver:
         if self._cdp is None:
             raise BrowserError("no open tab; call open() first")
         self._cdp.drain_events()
+        try:
+            await self._goto_and_settle(url)
+            info = await self._target_info()
+            return await self._read(title=info.get("title", ""), url=info.get("url", url))
+        except BrowserError as exc:
+            if not self._is_session_drop(exc):
+                raise
+            # the page session dropped mid-navigation: re-attach and redo once
+            await self.reconnect()
+            await self._goto_and_settle(url)
+            info = await self._target_info()
+            return await self._read(title=info.get("title", ""), url=info.get("url", url))
+
+    async def _goto_and_settle(self, url: str) -> None:
         await self._cdp.call("Page.navigate", url=url)
         await self._wait_page_loaded()
         await self._settle()
-        info = await self._target_info()
-        return await self._read(title=info.get("title", ""), url=info.get("url", url))
+
+    @staticmethod
+    def _is_session_drop(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(sig in text for sig in (
+            "not attached", "no close frame", "connection closed", "target closed",
+        ))
 
     async def _wait_page_loaded(self, timeout: float = 30.0) -> None:
         """Ask the page (not the protocol) whether it finished loading.
@@ -259,8 +278,15 @@ class BrowserObserver:
         """Re-read the current page without navigating (fresh table between steps)."""
         if self._cdp is None:
             raise BrowserError("no open tab; call open() first")
-        info = await self._target_info()
-        return await self._read(title=info.get("title", ""), url=info.get("url", ""))
+        try:
+            info = await self._target_info()
+            return await self._read(title=info.get("title", ""), url=info.get("url", ""))
+        except BrowserError as exc:
+            if not self._is_session_drop(exc):
+                raise
+            await self.reconnect()
+            info = await self._target_info()
+            return await self._read(title=info.get("title", ""), url=info.get("url", ""))
 
     async def page_key(self) -> str | None:
         if self._cdp is None:

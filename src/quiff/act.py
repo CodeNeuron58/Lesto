@@ -7,6 +7,7 @@ browser; real mouse and keyboard input is the fallback. Anything irreversible
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import time
 from pathlib import Path
@@ -100,8 +101,20 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
 
     if decision.action == "press":
         combo = " ".join(decision.values).strip() or "Enter"
+        before_url = (await observer.target_info()).get("url", "")
+        before_title = (await observer.target_info()).get("title", "")
         await _press_key(cdp, combo)
-        return ActResult(ok=True, detail=f"pressed {combo}")
+        await asyncio.sleep(0.6)
+        after_url = (await observer.target_info()).get("url", "")
+        after_title = (await observer.target_info()).get("title", "")
+        if after_url != before_url:
+            return ActResult(ok=True,
+                             detail=f"pressed {combo} — page navigated to {after_url}")
+        if after_title != before_title:
+            return ActResult(ok=True,
+                             detail=f"pressed {combo} — page is now '{after_title}'")
+        return ActResult(ok=True,
+                         detail=f"pressed {combo} — no visible change (URL and title unchanged)")
 
     if decision.action in ("done", "answer"):
         return ActResult(ok=True, detail=decision.action)
@@ -254,6 +267,12 @@ async def _press_key(cdp, combo: str) -> None:
         await cdp.call("Input.dispatchKeyEvent", type="rawKeyDown", key=key,
                        windowsVirtualKeyCode=vk, code=code, text=text,
                        modifiers=modifiers)
+        if text:
+            # a separate char event with the transition bits: typeahead and
+            # form-submit handlers key off the committed character
+            await cdp.call("Input.dispatchKeyEvent", type="char", key=key,
+                           windowsVirtualKeyCode=vk, code=code, text=text,
+                           modifiers=modifiers)
         await cdp.call("Input.dispatchKeyEvent", type="keyUp", key=key,
                        windowsVirtualKeyCode=vk, code=code, modifiers=modifiers)
     for mk in reversed(modifier_keys):
@@ -362,7 +381,14 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
     """Accessibility patterns first (Invoke, SetValue...); the keyboard is the fallback."""
     if decision.action == "press":
         combo = " ".join(decision.values).strip() or "enter"
+        before = observer.current_hwnd()
         _press_combo(observer, combo)
+        time.sleep(0.4)
+        after = observer.current_hwnd()
+        if after != before:
+            return ActResult(ok=True,
+                             detail=f"pressed {combo} — a new window opened "
+                                    f"('{observer._window_title_safe(after)}')")
         return ActResult(ok=True, detail=f"pressed {combo}")
 
     if decision.action in ("done", "answer", "wait"):

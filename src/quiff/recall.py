@@ -76,7 +76,7 @@ class FlowRecorder:
 
     async def decide(
         self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
-        last_result: str | None = None,
+        last_result: str | None = None, progress: str | None = None,
     ) -> Decision:
         decision = await self.inner.decide(goal, subgoal, table, history,
                                            last_result=last_result)
@@ -122,7 +122,7 @@ class ReplayDecider:
 
     async def decide(
         self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
-        last_result: str | None = None,
+        last_result: str | None = None, progress: str | None = None,
     ) -> Decision:
         if self._next >= len(self.flow.steps):
             return Decision(action="done", subgoal_done=True, note="flow finished")
