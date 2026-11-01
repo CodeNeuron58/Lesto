@@ -112,6 +112,6 @@ class Rescuer:
         self.decision = decision
         self.called = 0
 
-    async def decide(self, goal, subgoal, table, history, last_result=None):
+    async def decide(self, goal, subgoal, table, history, last_result=None, progress=None):
         self.called += 1
         return self.decision

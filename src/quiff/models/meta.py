@@ -192,20 +192,23 @@ DECISION_SCHEMA: dict = {
 
 def decision_prompt(goal: str, subgoal: str, table: ActionTable,
                     history, last_result: str | None = None,
-                    progress: str | None = None) -> str:
+                    progress: str | None = None,
+                    capabilities: str | None = None) -> str:
     """Only the goal, subgoal, action table and last two actions go to the model."""
     recent = "\n".join(
         f"- {d.action} row {d.row} {list(d.values)}" for d in list(history)[-2:]
     ) or "(none yet)"
     last = last_result or "(the last step has not happened yet)"
     progress_line = progress or "(counted from completed actions)"
+    caps = capabilities or ""
     return (
         f"Goal: {goal}\n"
         f"Current subgoal: {subgoal}\n\n"
         f"Action table (numbered rows; act on rows by their number):\n"
         f"{table.render()}\n\n"
         f"Last two actions taken:\n{recent}\n"
-        f"Result of the last action: {last}\n\n"
+        f"Result of the last action: {last}\n"
+        f"{progress_line}\n\n"
         "Reply with JSON only: pick ONE next action. 'click'/'type'/'select' need a row "
         "number from the table; 'type' fills 'values' with the text; 'press' puts the key "
         "in 'values' (e.g. [\"Enter\"]); 'navigate' puts the full URL in 'values' and goes "
@@ -217,7 +220,9 @@ def decision_prompt(goal: str, subgoal: str, table: ActionTable,
         "the complete destination path in 'values' (e.g. [\"C:\\folder\\file.txt\"]) and "
         "the driver opens the menu and dialog itself; 'wait' ONLY while an action is "
         "clearly still in progress; 'done' when the subgoal is complete; 'answer' puts "
-        "the final answer in 'answer'. Judge whether the last step worked (last_step_ok) "
+        "the final answer in 'answer'. "
+        + (f"Available in this session: {caps}. " if caps else "")
+        + "Judge whether the last step worked (last_step_ok) "
         "and whether the subgoal is done (subgoal_done). Set confidence between 0 and 1. "
         "If the table already shows what you need for the next action, act — do not wait."
     )
@@ -244,7 +249,10 @@ class MuseDecider:
                      last_result: str | None = None, progress: str | None = None):
         import asyncio
 
-        prompt = decision_prompt(goal, subgoal, table, history, last_result, progress)
+        caps = ("navigate and download actions are available"
+                if self.allow_navigate else
+                "navigate and download are NOT available on desktop apps")
+        prompt = decision_prompt(goal, subgoal, table, history, last_result, progress, caps)
         parsed, reply = await asyncio.to_thread(
             self.client.structured, prompt, decision_schema(self.allow_wait, self.allow_navigate),
             name="decision", effort=self.effort, max_tokens=self.max_tokens,

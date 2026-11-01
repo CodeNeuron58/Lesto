@@ -49,11 +49,20 @@ MAX_TABLE_ROWS = 250
 CONSENT_LABEL = re.compile(r"\b(accept|agree|consent|ok|allow|got it)\b", re.I)
 
 
+RISKY_DIALOG = re.compile(r"(delete|remove|confirm|permanently|send|pay)", re.I)
+
+
 def _collapse_consent_walls(rows: list[ActionRow]) -> list[ActionRow]:
     """jev-ra's consent-wall collapse: while a dialog overlay is up, the only
-    sensible actions are its accept-buttons — everything else is noise."""
+    sensible actions are its accept-buttons — everything else is noise.
+
+    Safety: the collapse is skipped when the dialog carries destructive words
+    (a 'Delete file? OK' confirmation must reach the approval guard with its
+    context intact, not be reduced to a bare OK)."""
     has_dialog = any(r.role == "dialog" for r in rows)
     if not has_dialog:
+        return rows
+    if any(RISKY_DIALOG.search(r.name) for r in rows):
         return rows
     accept = [r for r in rows if r.role in ("button", "link")
               and CONSENT_LABEL.search(r.name)]

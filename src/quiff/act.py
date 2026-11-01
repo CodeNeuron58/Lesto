@@ -166,8 +166,14 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
         import urllib.request
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url, timeout=60.0) as response,                 open(dest, "wb") as out:
-            out.write(response.read())
+
+        def _fetch() -> bytes:
+            with urllib.request.urlopen(url, timeout=60.0) as response:
+                return response.read()
+
+        body = await asyncio.to_thread(_fetch)  # keep the event loop free
+        with open(dest, "wb") as out:
+            out.write(body)
         return ActResult(ok=True, detail=f"downloaded {url} -> {dest}")
 
     if decision.action == "navigate":

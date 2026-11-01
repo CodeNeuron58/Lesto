@@ -131,7 +131,9 @@ class FastLoop:
                         success = False
                         break
                     try:
-                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision = await self.rescuer.decide(goal, subgoal or "", table,
+                                                             history, last_result=last_result,
+                                                             progress=progress)
                         decision = replace(decision, note=f"{decision.note} · rescued".strip(" ·"))
                     except Exception as exc:
                         stop_reason = f"decider and rescuer failed: {first_error} / {exc}"
