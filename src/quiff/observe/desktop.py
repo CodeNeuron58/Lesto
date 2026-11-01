@@ -394,20 +394,29 @@ class DesktopObserver:
 
 def invoke_menu(self, path: list[str]) -> bool:  # bound to DesktopObserver below
     """Resolve a menu path like ["File", "Save as"] one live level at a time
-    and invoke the final item through accessibility APIs."""
-    hwnd = self._current_window()
-    element = uia.ElementFromHandle(hwnd)
-    for label in path:
-        name_cond = uia.CreatePropertyCondition(UIA.UIA_NamePropertyId, label)
+    and invoke the final item through accessibility APIs.
+
+    Cua's invariant: no cached element survives a menu mutation — every hop
+    re-walks the window (and any popups it owns) from scratch, because the
+    opened menu level lives in a fresh subtree, not under the previous item.
+    """
+    for depth, label in enumerate(path):
+        hwnd = self._current_window()
+        roots = [uia.ElementFromHandle(hwnd)]
+        roots += [uia.ElementFromHandle(w) for w in self._owned_popups(hwnd)]
         found = None
-        for role_id in (UIA.UIA_MenuItemControlTypeId, UIA.UIA_ButtonControlTypeId):
-            role_cond = uia.CreatePropertyCondition(UIA.UIA_ControlTypePropertyId, role_id)
-            try:
-                found = element.FindFirst(
-                    UIA.TreeScope_Descendants, uia.CreateAndCondition(name_cond, role_cond)
-                )
-            except comtypes.COMError:
-                found = None
+        name_cond = uia.CreatePropertyCondition(UIA.UIA_NamePropertyId, label)
+        for root in roots:
+            for role_id in (UIA.UIA_MenuItemControlTypeId, UIA.UIA_ButtonControlTypeId):
+                role_cond = uia.CreatePropertyCondition(UIA.UIA_ControlTypePropertyId, role_id)
+                try:
+                    found = root.FindFirst(
+                        UIA.TreeScope_Descendants, uia.CreateAndCondition(name_cond, role_cond)
+                    )
+                except comtypes.COMError:
+                    found = None
+                if found:
+                    break
             if found:
                 break
         if not found:
@@ -421,9 +430,34 @@ def invoke_menu(self, path: list[str]) -> bool:  # bound to DesktopObserver belo
                 expand.QueryInterface(UIA.IUIAutomationExpandCollapsePattern).Expand()
         except comtypes.COMError:
             return False
-        time.sleep(0.25)  # let the menu level open before searching the next label
-        element = found
+        time.sleep(0.3)  # let the menu level open before searching the next label
     return True
+
+
+def _owned_popups(self, root_hwnd: int) -> list[int]:  # bound to DesktopObserver below
+    """Visible popups owned by our window (opened menus live here)."""
+    import ctypes as ct
+
+    out = []
+    for hwnd in self._all_visible_windows():
+        if ct.windll.user32.GetWindow(hwnd, 4) == root_hwnd and _pid_of(hwnd) == self._pid:
+            out.append(hwnd)
+    return out
+
+
+def _all_visible_windows(self) -> list[int]:  # bound to DesktopObserver below
+    import ctypes as ct
+
+    out = []
+
+    @ct.WINFUNCTYPE(ct.c_int, ct.c_void_p, ct.c_void_p)
+    def on_window(hwnd, _lp):
+        if user32.IsWindowVisible(hwnd):
+            out.append(hwnd)
+        return True
+
+    user32.EnumWindows(on_window, 0)
+    return out
 
 
 def wait_for_window(self, *, title_contains: str, timeout: float = 10.0,
@@ -446,9 +480,11 @@ def wait_for_window(self, *, title_contains: str, timeout: float = 10.0,
     return None
 
 
-# The two skills above are written as methods; bind them to the class.
+# The skills above are written as methods; bind them to the class.
 DesktopObserver.invoke_menu = invoke_menu
 DesktopObserver.wait_for_window = wait_for_window
+DesktopObserver._owned_popups = _owned_popups
+DesktopObserver._all_visible_windows = _all_visible_windows
 
 
 def _answer_dont_save(hwnd: int) -> None:

@@ -107,7 +107,8 @@ class ChatClient:
             raise ModelError(f"HTTP {response.status_code}: {response.text[:300]}")
         data = response.json()
         choice = data["choices"][0]
-        if not (choice["message"].get("content") or "").strip()                 and choice.get("finish_reason") == "length":
+        content = (choice["message"].get("content") or "").strip()
+        if not content and choice.get("finish_reason") == "length":
             reasoning = (data.get("usage", {}).get("completion_tokens_details", {})
                          .get("reasoning_tokens", 0))
             raise ModelError(

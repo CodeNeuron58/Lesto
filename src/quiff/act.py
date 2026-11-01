@@ -570,8 +570,17 @@ def _save_as(observer, file_path: str) -> ActResult:
             time.sleep(0.8)
     finally:
         observer._hwnd = previous
-    if Path(file_path).exists():
-        return ActResult(ok=True, detail=f"saved {file_path}")
+    # the flush can lag the Enter: poll for the file instead of one check
+    deadline = time.monotonic() + 4.0
+    while time.monotonic() < deadline:
+        if Path(file_path).exists():
+            return ActResult(ok=True, detail=f"saved {file_path}")
+        confirm = observer.wait_for_window(title_contains="confirm save as",
+                                           timeout=0.0, owned=True)
+        if confirm:
+            from quiff.act import _click_button
+            _click_button(observer, confirm, "Yes")
+        time.sleep(0.3)
     return ActResult(ok=False, detail=f"save did not land at {file_path}")
 
 

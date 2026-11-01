@@ -217,6 +217,32 @@ async def run_task(
     return TaskRun(task=task, loop=result, checks=checks)
 
 
+def _notepad_pids() -> set[int]:
+    """Pids of running Notepad processes (scanned from visible windows)."""
+    import ctypes
+
+    pids: set[int] = set()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    from .observe.desktop import _pid_of, _visible_windows
+
+    for hwnd in _visible_windows():
+        pid = _pid_of(hwnd)
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.c_ulong(len(buf))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                if buf.value.lower().endswith("notepad.exe"):
+                    pids.add(pid)
+        finally:
+            kernel32.CloseHandle(handle)
+    return pids
+
+
 def _preflight_desktop_app(task: Task) -> None:
     """Close leftover EMPTY windows of the task's app and clear its saved
     session state, so a run starts clean instead of restoring junk tabs from
@@ -225,7 +251,6 @@ def _preflight_desktop_app(task: Task) -> None:
     Windows holding documents are NEVER killed — a blank "Untitled" window is
     safe to close with Don't save, a "dates.txt - Notepad" belongs to the user
     and makes the run refuse instead."""
-    import ctypes
     import os
 
     from .observe.desktop import (_answer_dont_save, _top_windows_of_pid, _visible_windows,
@@ -234,26 +259,7 @@ def _preflight_desktop_app(task: Task) -> None:
     if task.app != "notepad":
         return  # other apps: no safe blanket policy yet, none needed for the suite
 
-    def notepad_pids() -> set[int]:
-        pids = set()
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        for hwnd in _visible_windows():
-            pid = _pid_of(hwnd)
-            handle = kernel32.OpenProcess(0x1000, False, pid)
-            if not handle:
-                continue
-            try:
-                buf = ctypes.create_unicode_buffer(1024)
-                size = ctypes.c_ulong(len(buf))
-                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                    if buf.value.lower().endswith("notepad.exe"):
-                        pids.add(pid)
-            finally:
-                kernel32.CloseHandle(handle)
-        return pids
-
-    pids = notepad_pids()
+    pids = _notepad_pids()
     if not pids:
         return
     # close blank windows politely (Don't save on any prompt)

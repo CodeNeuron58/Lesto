@@ -31,25 +31,6 @@ async def wait_for(predicate, *, timeout: float = 10.0, interval: float = 0.1) -
         await asyncio.sleep(interval)
 
 
-class Page:
-    """Plain-code views of the browser page the checks wait on."""
-
-    def __init__(self, observer: BrowserObserver) -> None:
-        self._observer = observer
-
-    async def url(self) -> str:
-        try:
-            return (await self._observer.target_info()).get("url", "")
-        except Exception:
-            return ""
-
-    async def title(self) -> str:
-        try:
-            return (await self._observer.target_info()).get("title", "")
-        except Exception:
-            return ""
-
-
 async def wait_stable_url(observer: BrowserObserver, *, samples: int = 2,
                           interval: float = 0.25, timeout: float = 6.0) -> str:
     """Wait until the page URL stops changing and return it.
@@ -58,13 +39,18 @@ async def wait_stable_url(observer: BrowserObserver, *, samples: int = 2,
     checking the page before it settles races the navigation. Evidence, not
     a clock: the URL must read the same on `samples` consecutive reads.
     """
-    page = Page(observer)
-    last = await page.url()
+    async def url() -> str:
+        try:
+            return (await observer.target_info()).get("url", "")
+        except Exception:
+            return ""
+
+    last = await url()
     stable = 0
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         await asyncio.sleep(interval)
-        current = await page.url()
+        current = await url()
         if current == last:
             stable += 1
             if stable >= samples - 1:
