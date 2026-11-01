@@ -191,12 +191,14 @@ DECISION_SCHEMA: dict = {
 
 
 def decision_prompt(goal: str, subgoal: str, table: ActionTable,
-                    history, last_result: str | None = None) -> str:
+                    history, last_result: str | None = None,
+                    progress: str | None = None) -> str:
     """Only the goal, subgoal, action table and last two actions go to the model."""
     recent = "\n".join(
         f"- {d.action} row {d.row} {list(d.values)}" for d in list(history)[-2:]
     ) or "(none yet)"
     last = last_result or "(the last step has not happened yet)"
+    progress_line = progress or "(counted from completed actions)"
     return (
         f"Goal: {goal}\n"
         f"Current subgoal: {subgoal}\n\n"
@@ -239,10 +241,10 @@ class MuseDecider:
         self.allow_navigate = allow_navigate
 
     async def decide(self, goal, subgoal, table: ActionTable, history,
-                     last_result: str | None = None):
+                     last_result: str | None = None, progress: str | None = None):
         import asyncio
 
-        prompt = decision_prompt(goal, subgoal, table, history, last_result)
+        prompt = decision_prompt(goal, subgoal, table, history, last_result, progress)
         parsed, reply = await asyncio.to_thread(
             self.client.structured, prompt, decision_schema(self.allow_wait, self.allow_navigate),
             name="decision", effort=self.effort, max_tokens=self.max_tokens,

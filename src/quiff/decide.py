@@ -81,7 +81,7 @@ class MatchDecider:
 
     async def decide(
         self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
-        last_result: str | None = None,
+        last_result: str | None = None, progress: str | None = None,
     ) -> Decision:
         if self._next >= len(self.steps):
             return Decision(action="done", subgoal_done=True, note="script finished")

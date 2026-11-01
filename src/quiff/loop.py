@@ -106,12 +106,15 @@ class FastLoop:
         force_rescue = False
         corrected = False
         last_result: str | None = None
+        performed: dict[tuple[str, str], int] = {}
 
         for step_no in range(1, self.max_steps + 1):
             decide_start = time.perf_counter()
+            progress = _progress_text(performed)
             try:
                 decision = await self.decider.decide(
-                    goal, subgoal or "", table, history, last_result=last_result
+                    goal, subgoal or "", table, history, last_result=last_result,
+                    progress=progress,
                 )
             except Exception as first_error:
                 # a transient 429/timeout must not kill the run: retry once,
@@ -119,7 +122,8 @@ class FastLoop:
                 await asyncio.sleep(2.0)
                 try:
                     decision = await self.decider.decide(
-                        goal, subgoal or "", table, history, last_result=last_result
+                        goal, subgoal or "", table, history, last_result=last_result,
+                        progress=progress,
                     )
                 except Exception:
                     if self.rescuer is None:
@@ -219,6 +223,11 @@ class FastLoop:
 
             result = await act(self.observer, table, decision)
             history.append(decision)
+            if result.ok and decision.row is not None:
+                row = table.by_index(decision.row)
+                if row is not None:
+                    key = (decision.action, f"{row.role} '{row.name[:24]}'")
+                    performed[key] = performed.get(key, 0) + 1
             last_result = ("OK: " if result.ok else "FAILED: ") + result.detail
             self._log(step_no, decision, result, table, decide_ms, observe_ms)
 
@@ -294,6 +303,17 @@ class FastLoop:
 SENSITIVE_FIELD = re.compile(
     r"pass(word)?|pwd|otp|secret|token|api[- _]?key|card|cvv|cvc|pin", re.I
 )
+
+
+def _progress_text(performed: dict[tuple[str, str], int]) -> str:
+    """Cua #4313: models cannot count from history — the runner counts its
+    own successful actions and states the tally outright."""
+    if not performed:
+        return "Task progress (counted from this run's own completed actions): nothing completed yet."
+    items = "; ".join(f"{action} on {target}: done {n}x"
+                      for (action, target), n in sorted(performed.items()))
+    return (f"Task progress (counted from this run's own completed actions, "
+            f"not read from the app): {items}.")
 
 
 def _redacted(decision: Decision, table: ActionTable) -> list[str]:

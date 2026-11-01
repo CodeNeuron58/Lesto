@@ -92,7 +92,7 @@ class FakeDecider:
         self.fail_first = fail_first
         self.calls = 0
 
-    async def decide(self, goal, subgoal, table, history, last_result=None):
+    async def decide(self, goal, subgoal, table, history, last_result=None, progress=None):
         self.calls += 1
         if self.calls <= self.fail_first:
             raise RuntimeError("transient API error")
