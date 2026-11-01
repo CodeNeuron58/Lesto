@@ -14,11 +14,12 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from .decide import Decision
-from .observe.browser import BrowserError, BrowserObserver
+from .observe.browser import BrowserError, BrowserObserver, is_session_drop
 from .observe.table import ActionRow
 
 # Words that make an action irreversible; the user must approve before it runs.
-RISKY_WORDS = ("send", "pay", "submit", "delete", "post", "approve", "transfer", "confirm",
+RISKY_WORDS = ("send", "pay", "submit", "delete", "remove", "erase", "uninstall",
+               "purchase", "post", "approve", "transfer", "confirm",
                "place order", "checkout")
 # Keyboard shortcuts that trigger the same words (e.g. Ctrl+Enter sends in Outlook).
 RISKY_KEYS = ("ctrl+enter", "ctrl+d", "shift+delete")
@@ -38,8 +39,7 @@ def needs_approval(decision: Decision, table: ActionTable) -> str | None:
         # the model chose where to write on disk — always a human decision
         return "download to " + (" ".join(decision.values) or "an unspecified path")
     if decision.action == "press":
-        key = "+".join(part.strip() for part in
-                       " ".join(decision.values).split("+") if part.strip()).lower()
+        key = "+".join(str(v).strip() for v in decision.values).lower()
         if any(key.endswith(risky) for risky in RISKY_KEYS):
             return f"keyboard shortcut {key}"
         return None
@@ -80,10 +80,7 @@ class _Recovering:
 
     @staticmethod
     def _is_session_drop(exc: Exception) -> bool:
-        text = str(exc).lower()
-        return any(sig in text for sig in (
-            "not attached", "no close frame", "connection closed", "target closed",
-        ))
+        return is_session_drop(exc)
 
     async def call(self, method: str, timeout: float = 15.0, **params):
         try:
@@ -105,12 +102,21 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
 
     if decision.action == "press":
         combo = " ".join(decision.values).strip() or "Enter"
-        before_url = (await observer.target_info()).get("url", "")
-        before_title = (await observer.target_info()).get("title", "")
+        async def _capture():
+            info = await observer.target_info()
+            return info.get("url", ""), info.get("title", "")
+
+        try:
+            before_url, before_title = await _capture()
+        except Exception:
+            before_url, before_title = None, None
         await _press_key(cdp, combo)
         await asyncio.sleep(0.6)
-        after_url = (await observer.target_info()).get("url", "")
-        after_title = (await observer.target_info()).get("title", "")
+        try:
+            after_url, after_title = await _capture()
+        except Exception:
+            # the effect check must not flip a landed press to failed
+            return ActResult(ok=True, detail=f"pressed {combo} (effect unverified)")
         if after_url != before_url:
             return ActResult(ok=True,
                              detail=f"pressed {combo} — page navigated to {after_url}")
@@ -303,7 +309,11 @@ def _key_spec(key: str) -> tuple[str, int, str]:
         "arrowright": ("ArrowRight", 39, ""),
         "pagedown": ("PageDown", 34, ""),
         "pageup": ("PageUp", 33, ""),
+        "space": ("Space", 32, " "),
+        "home": ("Home", 36, ""),
+        "end": ("End", 35, ""),
         "delete": ("Delete", 46, ""),
+        "insert": ("Insert", 45, ""),
         **{f"f{i}": (f"F{i}", 0x70 + i - 1, "") for i in range(1, 13)},
     }
     return specs.get(key, (key.capitalize(), ord(key.upper()[:1]) if key else 0, key[:1]))

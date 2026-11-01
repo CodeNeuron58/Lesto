@@ -89,3 +89,48 @@ def test_delete_key_in_both_maps():
     from quiff.act import VK_CODES, _key_spec
     assert VK_CODES["delete"] == 0x2E
     assert _key_spec("delete") == ("Delete", 46, "")
+
+
+@pytest.mark.asyncio
+async def test_press_reports_navigated_effect():
+    rows = (ActionRow(1, "button", "Login", ("click",), True, target=1),)
+    observer = FakeBrowserObserver(rows)
+    table = observer.table()
+
+    calls = {"n": 0}
+
+    async def fake_target_info():
+        calls["n"] += 1
+        # call 1 = the before-capture, call 2 = the after-capture
+        if calls["n"] >= 2:
+            return {"url": "https://x/after", "title": "After"}
+        return {"url": "https://x/before", "title": "Before"}
+
+    observer.target_info = fake_target_info
+    result = await _act_browser(observer, table,
+                                Decision(action="press", values=("Enter",)))
+    assert result.ok and ("navigated" in result.detail or "now" in result.detail)
+
+
+@pytest.mark.asyncio
+async def test_press_reports_no_change_when_capture_fails():
+    rows = (ActionRow(1, "button", "Login", ("click",), True, target=1),)
+    observer = FakeBrowserObserver(rows)
+    table = observer.table()
+
+    async def broken_target_info():
+        raise RuntimeError("chrome busy")
+
+    observer.target_info = broken_target_info
+    result = await _act_browser(observer, table,
+                                Decision(action="press", values=("Enter",)))
+    # a capture failure must not flip a landed press to failed
+    assert result.ok and "effect unverified" in result.detail
+
+
+def test_key_spec_and_vk_codes_have_the_same_keys():
+    # parity test: the pass-6 review found browser/desktop key maps diverging
+    from quiff.act import VK_CODES, _key_spec
+    for key in VK_CODES:
+        spec = _key_spec(key)
+        assert spec[1] == VK_CODES[key], f"{key} vk mismatch: {spec}"

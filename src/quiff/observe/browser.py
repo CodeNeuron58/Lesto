@@ -18,8 +18,19 @@ import urllib.request
 from dataclasses import dataclass
 
 from websockets.asyncio.client import connect
+from websockets.exceptions import WebSocketException
 
 from .table import ActionRow, ActionTable
+
+
+SESSION_DROP_SIGS = ("not attached", "no close frame", "connection closed",
+                     "target closed")
+
+
+def is_session_drop(exc: Exception) -> bool:
+    """True for every error signature that means the page session died."""
+    text = str(exc).lower()
+    return any(sig in text for sig in SESSION_DROP_SIGS)
 
 # Roles a user can act on, mapped to what Quiff may do with them.
 ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
@@ -177,10 +188,9 @@ class CDPConnection:
 
     async def call(self, method: str, timeout: float = 15.0, **params) -> dict:
         assert self._ws
-        self._next_id += 1
         try:
             return await self._call_inner(method, timeout, **params)
-        except websockets.WebSocketException as exc:
+        except WebSocketException as exc:
             # real drops surface as websockets errors, not BrowserError —
             # normalize so the reconnect machinery can see them
             raise BrowserError(str(exc)) from None
@@ -292,10 +302,7 @@ class BrowserObserver:
 
     @staticmethod
     def _is_session_drop(exc: Exception) -> bool:
-        text = str(exc).lower()
-        return any(sig in text for sig in (
-            "not attached", "no close frame", "connection closed", "target closed",
-        ))
+        return is_session_drop(exc)
 
     async def _wait_page_loaded(self, timeout: float = 30.0) -> None:
         """Ask the page (not the protocol) whether it finished loading.

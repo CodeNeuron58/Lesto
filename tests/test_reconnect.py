@@ -41,3 +41,26 @@ async def test_recovering_raises_other_errors_immediately():
     with pytest.raises(BrowserError):
         await recovering.call("Runtime.evaluate")
     assert observer.reconnects == 0
+
+
+@pytest.mark.asyncio
+async def test_real_websockets_drop_normalizes_to_browser_error():
+    # the bug class from the pass-6 review: real socket drops raised
+    # websockets exceptions, which the reconnect machinery never saw
+    import websockets.exceptions
+
+    from quiff.observe.browser import CDPConnection, BrowserError
+
+    conn = CDPConnection("ws://127.0.0.1:1/unused")
+
+    class DeadWS:
+        async def send(self, msg):
+            raise websockets.exceptions.ConnectionClosedError(1006, None)
+
+        async def close(self):
+            pass
+
+    conn._ws = DeadWS()
+    conn._event_arrived = __import__("asyncio").Condition()
+    with pytest.raises(BrowserError):
+        await conn.call("Page.navigate", url="http://x/")
