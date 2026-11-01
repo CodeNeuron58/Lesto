@@ -42,3 +42,27 @@ def test_flow_save_and_load_roundtrip(tmp_path):
     assert loaded.goal == "log in"
     assert loaded.steps[0].values == ("tomsmith",)
     assert path.exists()
+
+
+def test_consent_wall_collapses_to_accept_buttons():
+    from quiff.observe.browser import _collapse_consent_walls
+    rows = (
+        ActionRow(1, "dialog", "Cookie consent", (), True),
+        ActionRow(2, "button", "Accept all cookies", ("click",), True),
+        ActionRow(3, "button", "Reject", ("click",), True),
+        ActionRow(4, "link", "Some page", ("click",), True),
+    )
+    collapsed = _collapse_consent_walls(list(rows))
+    assert [r.name for r in collapsed] == ["Accept all cookies"]
+
+
+def test_off_site_links_demote_to_end():
+    from quiff.observe.browser import _demote_off_site
+    rows = (
+        ActionRow(1, "link", "External partner", ("click",), True,
+                  ref="https://partner.example.com/page"),
+        ActionRow(2, "link", "Internal docs", ("click",), True,
+                  ref="https://docs.mysite.test/setup"),
+    )
+    ordered = _demote_off_site(list(rows), "https://www.mysite.test/home")
+    assert [r.name for r in ordered] == ["Internal docs", "External partner"]

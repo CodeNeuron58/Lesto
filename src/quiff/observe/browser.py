@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -43,6 +44,42 @@ ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
 # unnamed. Bare checkboxes and radios are common and perfectly clickable.
 MAX_TABLE_ROWS = 250
 """Cua caps candidates at 24, jev at 250 — beyond this the model wanders."""
+
+
+CONSENT_LABEL = re.compile(r"\b(accept|agree|consent|ok|allow|got it)\b", re.I)
+
+
+def _collapse_consent_walls(rows: list[ActionRow]) -> list[ActionRow]:
+    """jev-ra's consent-wall collapse: while a dialog overlay is up, the only
+    sensible actions are its accept-buttons — everything else is noise."""
+    has_dialog = any(r.role == "dialog" for r in rows)
+    if not has_dialog:
+        return rows
+    accept = [r for r in rows if r.role in ("button", "link")
+              and CONSENT_LABEL.search(r.name)]
+    return accept or rows
+
+
+def _site_of(url_or_host: str) -> str:
+    host = re.sub(r"^https?://", "", url_or_host).split("/")[0].split(":")[0]
+    parts = host.rsplit(".", 3)
+    if len(parts) >= 3 and parts[-2] in ("co", "com", "org", "net", "gov", "edu"):
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def _demote_off_site(rows: list[ActionRow], current_url: str) -> list[ActionRow]:
+    """Links away from the current site sort last — a goal is sometimes
+    exactly one of them, so they stay on offer (jev-ra elsewhere())."""
+    home = _site_of(current_url)
+    if not home:
+        return rows
+    on_site, away = [], []
+    for row in rows:
+        match = re.search(r'https?://([^/\s"]+)', row.ref) if row.ref else None
+        off = row.role == "link" and bool(match and _site_of(match.group(1)) != home)
+        (away if off else on_site).append(row)
+    return on_site + away
 
 
 def _filter_viewport(rows: list[ActionRow], bounds: dict[int, tuple[int, int, int, int]],
@@ -467,6 +504,8 @@ class BrowserObserver:
         rows = _table_rows(tree.get("nodes", []))
         bounds, viewport = await self._viewport_bounds()
         rows = _filter_viewport(rows, bounds, viewport)
+        rows = _collapse_consent_walls(rows)
+        rows = _demote_off_site(rows, url or "")
         omitted = max(0, len(rows) - MAX_TABLE_ROWS)
         rows = rows[:MAX_TABLE_ROWS]
         elapsed_ms = int((time.perf_counter() - started) * 1000)
