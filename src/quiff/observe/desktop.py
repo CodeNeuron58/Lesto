@@ -223,7 +223,7 @@ class DesktopObserver:
                 if not ours:
                     break
                 for hwnd in ours:
-                    self._answer_dont_save(hwnd)
+                    _answer_dont_save(hwnd)
                     user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
         if self._process:
             self._process.terminate()
@@ -236,38 +236,10 @@ class DesktopObserver:
         self._hwnd = None
         self._launched = False
 
-    def _answer_dont_save(self, hwnd: int) -> None:
-        """Dismiss a prompt of ours: save prompts get Don't save, Confirm Save
-        As gets No, and error popups (file-not-found after session junk) get
-        OK or Close. Scoped to windows we launched."""
-        try:
-            element = uia.ElementFromHandle(hwnd)
-            window_title = _window_title(hwnd).lower()
-            buttons = element.FindAll(
-                UIA.TreeScope_Descendants,
-                uia.CreatePropertyCondition(
-                    UIA.UIA_ControlTypePropertyId, UIA.UIA_ButtonControlTypeId
-                ),
-            )
-        except Exception:
-            return
-        wanted = {"don't save", "dont save", "close without saving"}
-        if "confirm save as" in window_title:
-            wanted.add("no")  # our junk must not overwrite anything
-        if "not found" in window_title or "can't find" in window_title or "cannot find" in window_title:
-            wanted.update({"ok", "close"})
-        for i in range(buttons.Length):
-            button = buttons.GetElement(i)
-            if (button.CurrentName or "").strip().lower().replace("`", "'") in wanted:
-                try:
-                    pattern = button.GetCurrentPattern(UIA.UIA_InvokePatternId)
-                    if pattern:
-                        pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
-                except Exception:
-                    pass
-                return
+
 
     # ------------------------------------------------------------------ internals
+
 
     def _current_window(self) -> int:
         """Our window, or a dialog owned by it — never another window of the
@@ -477,3 +449,36 @@ def wait_for_window(self, *, title_contains: str, timeout: float = 10.0,
 # The two skills above are written as methods; bind them to the class.
 DesktopObserver.invoke_menu = invoke_menu
 DesktopObserver.wait_for_window = wait_for_window
+
+
+def _answer_dont_save(hwnd: int) -> None:
+    """Dismiss a prompt of ours: save prompts get Don't save, Confirm Save
+    As gets No, and error popups (file-not-found after session junk) get
+    OK or Close. Scoped to windows we launched."""
+    try:
+        element = uia.ElementFromHandle(hwnd)
+        window_title = _window_title(hwnd).lower()
+        buttons = element.FindAll(
+            UIA.TreeScope_Descendants,
+            uia.CreatePropertyCondition(
+                UIA.UIA_ControlTypePropertyId, UIA.UIA_ButtonControlTypeId
+            ),
+        )
+    except Exception:
+        return
+    wanted = {"don't save", "dont save", "close without saving"}
+    if "confirm save as" in window_title:
+        wanted.add("no")  # our junk must not overwrite anything
+    if "not found" in window_title or "can't find" in window_title or "cannot find" in window_title:
+        wanted.update({"ok", "close"})
+    for i in range(buttons.Length):
+        button = buttons.GetElement(i)
+        if (button.CurrentName or "").strip().lower().replace("`", "'") in wanted:
+            try:
+                pattern = button.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                if pattern:
+                    pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+            except Exception:
+                pass
+            return
+

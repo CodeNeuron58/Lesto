@@ -65,8 +65,26 @@ async def act(observer, table: ActionTable, decision: Decision) -> ActResult:
 
 # --------------------------------------------------------------------- browser
 
+class _Recovering:
+    """Routes CDP calls through the observer so a dropped page session
+    ('Not attached to an active page' on long warm tabs) reconnects to the
+    same tab and retries once, instead of failing the act."""
+
+    def __init__(self, observer):
+        self._observer = observer
+
+    async def call(self, method: str, timeout: float = 15.0, **params):
+        try:
+            return await self._observer.connection().call(method, timeout=timeout, **params)
+        except BrowserError as exc:
+            if "not attached" not in str(exc).lower():
+                raise
+            await self._observer.reconnect()
+            return await self._observer.connection().call(method, timeout=timeout, **params)
+
+
 async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: Decision) -> ActResult:
-    cdp = observer.connection()
+    cdp = _Recovering(observer)
 
     if table.page_key:
         live = await observer.page_key()
@@ -92,6 +110,9 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
         if point is None:
             return ActResult(ok=False, detail=f"row {decision.row} has no box on screen")
         x, y = point
+        # mouseMoved first: Chrome routes the press to the node under its
+        # hover point (jev-ra and Browser Use both send the move)
+        await cdp.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
         for verb, params in (
             ("Input.dispatchMouseEvent",
              dict(type="mousePressed", x=x, y=y, button="left", clickCount=1)),

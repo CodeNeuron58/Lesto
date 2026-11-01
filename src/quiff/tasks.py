@@ -93,7 +93,7 @@ class ObserverPage:
         return (await self._observer.target_info()).get("title", "")
 
     async def body_text(self) -> str:
-        result = await self._observer.connection().call(
+        result = await self._observer.call(
             "Runtime.evaluate",
             expression="document.body ? document.body.innerText : ''",
             returnByValue=True,
@@ -101,7 +101,7 @@ class ObserverPage:
         return result.get("result", {}).get("value", "") or ""
 
     async def dom_property(self, selector: str, property: str):
-        result = await self._observer.connection().call(
+        result = await self._observer.call(
             "Runtime.evaluate",
             expression=(
                 "(() => { const el = document.querySelector("
@@ -199,7 +199,7 @@ async def run_task(
         sandbox=sandbox,
         started_ts=started_ts,
     )
-    success = bool(result.success and all(item.ok for item in checks))
+    success = bool(all(item.ok for item in checks))
     if isinstance(decider, FlowRecorder):
         saved = decider.save_if_ran(success)
         if saved:

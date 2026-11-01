@@ -75,9 +75,11 @@ class FlowRecorder:
         self._ran = False
 
     async def decide(
-        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision]
+        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
+        last_result: str | None = None,
     ) -> Decision:
-        decision = await self.inner.decide(goal, subgoal, table, history)
+        decision = await self.inner.decide(goal, subgoal, table, history,
+                                           last_result=last_result)
         row = table.by_index(decision.row) if decision.row is not None else None
         if decision.action in ("click", "type", "select") and row is not None:
             # NOTE: flow files hold real typed values (replay must reproduce
@@ -119,7 +121,8 @@ class ReplayDecider:
         self._next = 0
 
     async def decide(
-        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision]
+        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
+        last_result: str | None = None,
     ) -> Decision:
         if self._next >= len(self.flow.steps):
             return Decision(action="done", subgoal_done=True, note="flow finished")

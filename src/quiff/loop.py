@@ -148,7 +148,6 @@ class FastLoop:
                 # still building); re-observe instead of acting. Past the
                 # budget, keep asking the rescuer to act instead of wait.
                 waits += 1
-                consecutive_waits += 1
                 if waits > MAX_WAITS and self.rescuer is not None:
                     try:
                         decision = await self.rescuer.decide(
