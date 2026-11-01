@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import time
+from pathlib import Path
 from dataclasses import dataclass
 
 from .decide import Decision
@@ -254,6 +255,10 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
     if decision.action in ("done", "answer", "wait"):
         return ActResult(ok=True, detail=decision.action)
 
+    if decision.action == "save_as":
+        path = " ".join(decision.values)
+        return _save_as(observer, path)
+
     row = table.by_index(decision.row) if decision.row is not None else None
     if row is None:
         return ActResult(ok=False, detail=f"row {decision.row} not in the table")
@@ -426,3 +431,89 @@ def _send_unicode(char: str) -> None:
     item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
     _send_input(item)
     time.sleep(0.025)  # without a beat, Windows drops rapid unicode events
+
+
+def _save_as(observer, file_path: str) -> ActResult:
+    """Save the front document to an exact path: File > Save as, full path, Enter.
+
+    The whole flow lives in the driver (Cua-style) because every app does it
+    the same way; the model only names the destination.
+    """
+    from .observe.desktop import DesktopError
+
+    if not observer.invoke_menu(["File", "Save as"]):
+        # fall back to the keyboard shortcut for apps without a File menu
+        _press_combo(observer, "ctrl+shift+s")
+    dialog = observer.wait_for_window(title_contains="save as", timeout=10.0, owned=True)
+    if not dialog:
+        # Some apps save silently when the file already has a path; verify by
+        # checking the file appears.
+        time.sleep(1.0)
+        if Path(file_path).exists():
+            return ActResult(ok=True, detail=f"saved (no dialog): {file_path}")
+        return ActResult(ok=False, detail="Save as dialog never appeared")
+
+    previous = observer._hwnd  # noqa: SLF001 - same package
+    observer._hwnd = dialog
+    try:
+        table_rows = observer._read_window(dialog)
+        from .observe.table import ActionTable
+
+        dialog_table = ActionTable(title="Save as", rows=tuple(table_rows))
+        edit = next((r for r in table_rows if r.role == "edit"
+                     and "file name" in r.name.lower()), None)
+        if edit is None:
+            return ActResult(ok=False, detail="no File name box in the Save dialog")
+        # The common-dialog file box accepts SetValue (and even reads it back)
+        # without committing it — only real keyboard events register here.
+        el = observer.find_row_element(edit.target)
+        if el is None:
+            return ActResult(ok=False, detail="File name box vanished")
+        try:
+            el.SetFocus()
+        except Exception:
+            pass
+        _force_foreground(observer)
+        _select_all_desktop()
+        _type_text(observer, file_path)
+        _press_combo(observer, "enter")
+        time.sleep(1.0)
+        # The target may already exist: Confirm Save As asks to replace. Our
+        # intent was to write this exact file, so answer Yes ourselves.
+        confirm = observer.wait_for_window(title_contains="confirm save as",
+                                           timeout=3.0, owned=True)
+        if confirm:
+            _click_button(observer, confirm, "Yes")
+            time.sleep(0.8)
+    finally:
+        observer._hwnd = previous
+    if Path(file_path).exists():
+        return ActResult(ok=True, detail=f"saved {file_path}")
+    return ActResult(ok=False, detail=f"save did not land at {file_path}")
+
+
+def _click_button(observer, hwnd: int, label: str) -> bool:
+    """Invoke one named button in a window of ours (Yes/OK/Don't save...)."""
+    from .observe.desktop import uia, UIA
+
+    try:
+        element = uia.ElementFromHandle(hwnd)
+        buttons = element.FindAll(
+            UIA.TreeScope_Descendants,
+            uia.CreatePropertyCondition(
+                UIA.UIA_ControlTypePropertyId, UIA.UIA_ButtonControlTypeId
+            ),
+        )
+    except Exception:
+        return False
+    for i in range(buttons.Length):
+        button = buttons.GetElement(i)
+        if (button.CurrentName or "").strip().lower() == label.lower():
+            try:
+                pattern = button.GetCurrentPattern(UIA.UIA_InvokePatternId)
+                if pattern:
+                    pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+                    return True
+            except Exception:
+                return False
+    return False

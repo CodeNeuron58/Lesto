@@ -162,6 +162,9 @@ async def run_task(
     logger = StepLogger(run_dir, task.id)
     started_ts = time.time()
 
+    if task.app != "chrome":
+        _preflight_desktop_app(task)
+
     loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer)
     if task.app == "chrome":
         result = await loop.run(task.goal, start_url=_start_url(task), subgoal=task.goal)
@@ -202,6 +205,27 @@ async def run_task(
         }
     )
     return TaskRun(task=task, loop=result, checks=checks)
+
+
+def _preflight_desktop_app(task: Task) -> None:
+    """Close leftover instances of the task's app and clear its saved session
+    state, so a run starts clean instead of restoring junk tabs from earlier
+    test runs. The user's own windows of other apps are untouched."""
+    import os
+    import subprocess
+
+    process_names = {"notepad": ["notepad.exe"], "explorer": [], "calculator": [],
+                     "excel": ["EXCEL.EXE"], "outlook": ["olk.exe"]}
+    for name in process_names.get(task.app, []):
+        subprocess.run(["taskkill", "/IM", name, "/F"],
+                       capture_output=True)  # fails harmlessly when none run
+    if task.app == "notepad":
+        tab_state = Path(os.environ.get("LOCALAPPDATA", "")) / (
+            "Packages/Microsoft.WindowsNotepad_8wekyb3d8bbwe/LocalState/TabState"
+        )
+        if tab_state.exists():
+            for junk in tab_state.glob("*.bin"):
+                junk.unlink(missing_ok=True)
 
 
 def _start_url(task: Task) -> str | None:

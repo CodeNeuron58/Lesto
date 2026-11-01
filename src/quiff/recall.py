@@ -83,6 +83,11 @@ class FlowRecorder:
                 FlowStep(action=decision.action, role=row.role, name=row.name,
                          values=decision.values)
             )
+        elif decision.action == "save_as":
+            # driver skill: replay re-runs the skill, not the fumbled steps
+            self.flow.steps.append(
+                FlowStep(action="save_as", role="", name="", values=decision.values)
+            )
         elif decision.action == "press":
             self.flow.steps.append(
                 FlowStep(action="press", role="", name="", values=decision.values)
@@ -115,9 +120,9 @@ class ReplayDecider:
         if self._next >= len(self.flow.steps):
             return Decision(action="done", subgoal_done=True, note="flow finished")
         step = self.flow.steps[self._next]
-        if step.action == "press":
+        if step.action in ("press", "save_as"):
             self._next += 1
-            return Decision(action="press", values=step.values, note="replayed")
+            return Decision(action=step.action, values=step.values, note="replayed")
         row = _find(table, step)
         if row is None:
             return Decision(action="wait", note=f"waiting for {step.role}/{step.name[:24]!r}")

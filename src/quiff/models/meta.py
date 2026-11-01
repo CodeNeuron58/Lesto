@@ -160,11 +160,23 @@ def muse_spark_open() -> ChatClient:
 
 
 # The decision schema: one request answers all four questions (and batches rows).
+def decision_schema(allow_wait: bool = True) -> dict:
+    """Desktop deciders get no 'wait': timing is the driver's job, and models
+    abuse waiting to stall. Browser deciders keep it for page loads."""
+    actions = ["click", "type", "select", "press"] + (
+        ["wait"] if allow_wait else []
+    ) + ["save_as", "done", "answer"]
+    schema = json.loads(json.dumps(DECISION_SCHEMA))
+    schema["properties"]["action"]["enum"] = actions
+    return schema
+
+
 DECISION_SCHEMA: dict = {
     "type": "object",
     "properties": {
         "action": {"type": "string",
-                   "enum": ["click", "type", "select", "press", "wait", "done", "answer"]},
+                   "enum": ["click", "type", "select", "press", "save_as", "wait",
+                            "done", "answer"]},
         "row": {"type": "integer"},
         "values": {"type": "array", "items": {"type": "string"}},
         "answer": {"type": "string"},
@@ -193,10 +205,12 @@ def decision_prompt(goal: str, subgoal: str, table: ActionTable,
         f"Result of the last action: {last}\n\n"
         "Reply with JSON only: pick ONE next action. 'click'/'type'/'select' need a row "
         "number from the table; 'type' fills 'values' with the text; 'press' puts the key "
-        "in 'values' (e.g. [\"Enter\"]); 'wait' ONLY while an action is clearly still in "
-        "progress; 'done' when the subgoal is complete; 'answer' puts the final answer in "
-        "'answer'. Judge whether the last step worked (last_step_ok) and whether the "
-        "subgoal is done (subgoal_done). Set confidence between 0 and 1. "
+        "in 'values' (e.g. [\"Enter\"]); 'save_as' is for saving the current document: put "
+        "the complete destination path in 'values' (e.g. [\"C:\\folder\\file.txt\"]) and "
+        "the driver opens the menu and dialog itself; 'wait' ONLY while an action is "
+        "clearly still in progress; 'done' when the subgoal is complete; 'answer' puts "
+        "the final answer in 'answer'. Judge whether the last step worked (last_step_ok) "
+        "and whether the subgoal is done (subgoal_done). Set confidence between 0 and 1. "
         "If the table already shows what you need for the next action, act — do not wait."
     )
 
@@ -210,18 +224,19 @@ class MuseDecider:
     """
 
     def __init__(self, client: ChatClient | None = None, effort: str = "minimal",
-                 max_tokens: int = 2048) -> None:
+                 max_tokens: int = 2048, allow_wait: bool = True) -> None:
         self.client = client or muse_spark()
         self.effort = effort
         self.max_tokens = max_tokens
+        self.allow_wait = allow_wait
 
     async def decide(self, goal, subgoal, table: ActionTable, history):
         import asyncio
 
         prompt = decision_prompt(goal, subgoal, table, history)
         parsed, reply = await asyncio.to_thread(
-            self.client.structured, prompt, DECISION_SCHEMA, name="decision",
-            effort=self.effort, max_tokens=self.max_tokens,
+            self.client.structured, prompt, decision_schema(self.allow_wait),
+            name="decision", effort=self.effort, max_tokens=self.max_tokens,
         )
         action = parsed.get("action", "done")
         row = parsed.get("row")
@@ -242,5 +257,5 @@ class MuseDecider:
             last_step_ok=parsed.get("last_step_ok"),
             subgoal_done=parsed.get("subgoal_done"),
             confidence=confidence,
-            note=f"{reply.model} · {reply.latency_ms} ms",
+            note=f"{parsed.get('note') or ''} · {reply.model} · {reply.latency_ms} ms".strip(" ·"),
         )

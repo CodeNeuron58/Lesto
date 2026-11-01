@@ -237,8 +237,9 @@ class DesktopObserver:
         self._launched = False
 
     def _answer_dont_save(self, hwnd: int) -> None:
-        """Click Don't save / No on a prompt of ours, whether it is a separate
-        dialog (Confirm Save As) or drawn inside the window."""
+        """Dismiss a prompt of ours: save prompts get Don't save, Confirm Save
+        As gets No, and error popups (file-not-found after session junk) get
+        OK or Close. Scoped to windows we launched."""
         try:
             element = uia.ElementFromHandle(hwnd)
             window_title = _window_title(hwnd).lower()
@@ -253,6 +254,8 @@ class DesktopObserver:
         wanted = {"don't save", "dont save", "close without saving"}
         if "confirm save as" in window_title:
             wanted.add("no")  # our junk must not overwrite anything
+        if "not found" in window_title or "can't find" in window_title or "cannot find" in window_title:
+            wanted.update({"ok", "close"})
         for i in range(buttons.Length):
             button = buttons.GetElement(i)
             if (button.CurrentName or "").strip().lower().replace("`", "'") in wanted:
@@ -410,3 +413,67 @@ class DesktopObserver:
         return window.FindFirst(
             UIA.TreeScope_Descendants, uia.CreateAndCondition(name_cond, role_cond)
         )
+
+
+# ---------------------------------------------------------------- driver skills
+# Cua-style: flows every app shares (menus, Save As, waiting for windows) live
+# here in deterministic code, so the model spends its decisions on the parts
+# that actually need judgement.
+
+def invoke_menu(self, path: list[str]) -> bool:  # bound to DesktopObserver below
+    """Resolve a menu path like ["File", "Save as"] one live level at a time
+    and invoke the final item through accessibility APIs."""
+    hwnd = self._current_window()
+    element = uia.ElementFromHandle(hwnd)
+    for label in path:
+        name_cond = uia.CreatePropertyCondition(UIA.UIA_NamePropertyId, label)
+        found = None
+        for role_id in (UIA.UIA_MenuItemControlTypeId, UIA.UIA_ButtonControlTypeId):
+            role_cond = uia.CreatePropertyCondition(UIA.UIA_ControlTypePropertyId, role_id)
+            try:
+                found = element.FindFirst(
+                    UIA.TreeScope_Descendants, uia.CreateAndCondition(name_cond, role_cond)
+                )
+            except comtypes.COMError:
+                found = None
+            if found:
+                break
+        if not found:
+            return False
+        try:
+            invoke = found.GetCurrentPattern(UIA.UIA_InvokePatternId)
+            if invoke:
+                invoke.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+            else:
+                expand = found.GetCurrentPattern(UIA.UIA_ExpandCollapsePatternId)
+                expand.QueryInterface(UIA.IUIAutomationExpandCollapsePattern).Expand()
+        except comtypes.COMError:
+            return False
+        time.sleep(0.25)  # let the menu level open before searching the next label
+        element = found
+    return True
+
+
+def wait_for_window(self, *, title_contains: str, timeout: float = 10.0,
+                    owned: bool | None = None) -> int | None:
+    """Wait until one of the app's windows has a title containing the text.
+
+    owned=True restricts to dialogs owned by our window; owned=False to the
+    root window itself; None accepts either. Returns the hwnd or None.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for hwnd in _top_windows_of_pid(self._pid):
+            if owned is True and _owner_of(hwnd) != self._root_hwnd:
+                continue
+            if owned is False and hwnd != self._root_hwnd:
+                continue
+            if title_contains.lower() in _window_title(hwnd).lower():
+                return hwnd
+        time.sleep(0.2)
+    return None
+
+
+# The two skills above are written as methods; bind them to the class.
+DesktopObserver.invoke_menu = invoke_menu
+DesktopObserver.wait_for_window = wait_for_window
