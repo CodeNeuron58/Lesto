@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import re
 import time
 
 from .observe.browser import BrowserObserver
@@ -74,13 +73,6 @@ async def wait_stable_url(observer: BrowserObserver, *, samples: int = 2,
             stable = 0
         last = current
     return last
-
-
-async def wait_url(observer: BrowserObserver, pattern: str, *, timeout: float = 15.0) -> bool:
-    """Wait until the page URL matches a regular expression."""
-    compiled = re.compile(pattern)
-    page = Page(observer)
-    return await wait_for(lambda: compiled.search(page.url()) is not None, timeout=timeout)
 
 
 class LoopDetector:

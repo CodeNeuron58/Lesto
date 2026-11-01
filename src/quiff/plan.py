@@ -1,6 +1,7 @@
-"""Plan and escalate: a frontier model splits the task into subgoals once at the start.
+"""Plan: a frontier model splits the task into subgoals once at the start.
 
-After that it is called only on low confidence, a failed check, or a detected loop.
+Escalation after that is handled in the loop: a second MuseDecider at high
+reasoning takes over on low confidence, a failed check, or a detected loop.
 """
 
 from __future__ import annotations
@@ -42,16 +43,3 @@ async def plan(goal: str, client: ChatClient | None = None) -> list[str]:
     subgoals = [s.strip() for s in parsed.get("subgoals", []) if s and s.strip()]
     return subgoals or [goal]
 
-
-async def rescue(goal: str, subgoal: str, problem: str, client: ChatClient | None = None) -> str:
-    """Ask the frontier model what to do differently when the fast path is stuck."""
-    client = client or muse_spark()
-    prompt = (
-        "A computer-use agent is stuck.\n"
-        f"Goal: {goal}\nSubgoal: {subgoal}\nProblem: {problem}\n\n"
-        'Reply with JSON only: {"advice": "one or two sentences on what to try next"}'
-    )
-    parsed, _ = await asyncio.to_thread(
-        client.structured, prompt, ADVICE_SCHEMA, name="rescue", effort="high", max_tokens=1024
-    )
-    return parsed.get("advice", "try a different approach")

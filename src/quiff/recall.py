@@ -56,7 +56,8 @@ def load_flow(task_id: str, directory: Path = FLOWS_DIR) -> Flow:
     if not path.exists():
         raise FileNotFoundError(f"no recorded flow for {task_id!r}; run it once first")
     data = json.loads(path.read_text(encoding="utf-8"))
-    steps = [FlowStep(**step) for step in data.pop("steps")]
+    steps = [FlowStep(values=tuple(step.pop("values")), **step)
+             for step in data.pop("steps")]
     return Flow(**data, steps=steps)
 
 
@@ -79,6 +80,9 @@ class FlowRecorder:
         decision = await self.inner.decide(goal, subgoal, table, history)
         row = table.by_index(decision.row) if decision.row is not None else None
         if decision.action in ("click", "type", "select") and row is not None:
+            # NOTE: flow files hold real typed values (replay must reproduce
+            # them) and stay local under runs/, which git ignores. The JSONL
+            # step logs, meant for training, redact credential-like fields.
             self.flow.steps.append(
                 FlowStep(action=decision.action, role=row.role, name=row.name,
                          values=decision.values)

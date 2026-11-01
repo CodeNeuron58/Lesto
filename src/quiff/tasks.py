@@ -182,7 +182,7 @@ async def run_task(
         desktop_goal = (
             f"{task.goal} (The task folder is: {sandbox}. When a Save dialog "
             f"appears, type the file's FULL path — folder and name together, "
-            f"e.g. {sandbox}\filename.txt — into the File name box.)"
+            f"e.g. {sandbox}/filename.txt — into the File name box.)"
         )
         if planned:
             desktop_goal = desktop_goal + " Subgoals: " + "; ".join(planned)
@@ -218,24 +218,76 @@ async def run_task(
 
 
 def _preflight_desktop_app(task: Task) -> None:
-    """Close leftover instances of the task's app and clear its saved session
-    state, so a run starts clean instead of restoring junk tabs from earlier
-    test runs. The user's own windows of other apps are untouched."""
-    import os
-    import subprocess
+    """Close leftover EMPTY windows of the task's app and clear its saved
+    session state, so a run starts clean instead of restoring junk tabs from
+    earlier test runs.
 
-    process_names = {"notepad": ["notepad.exe"], "explorer": [], "calculator": [],
-                     "excel": ["EXCEL.EXE"], "outlook": ["olk.exe"]}
-    for name in process_names.get(task.app, []):
-        subprocess.run(["taskkill", "/IM", name, "/F"],
-                       capture_output=True)  # fails harmlessly when none run
-    if task.app == "notepad":
-        tab_state = Path(os.environ.get("LOCALAPPDATA", "")) / (
-            "Packages/Microsoft.WindowsNotepad_8wekyb3d8bbwe/LocalState/TabState"
+    Windows holding documents are NEVER killed — a blank "Untitled" window is
+    safe to close with Don't save, a "dates.txt - Notepad" belongs to the user
+    and makes the run refuse instead."""
+    import ctypes
+    import os
+
+    from .observe.desktop import (_answer_dont_save, _top_windows_of_pid, _visible_windows,
+                                  _window_title, _pid_of, uia, UIA, user32, WM_CLOSE)
+
+    if task.app != "notepad":
+        return  # other apps: no safe blanket policy yet, none needed for the suite
+
+    def notepad_pids() -> set[int]:
+        pids = set()
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        for hwnd in _visible_windows():
+            pid = _pid_of(hwnd)
+            handle = kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                continue
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = ctypes.c_ulong(len(buf))
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    if buf.value.lower().endswith("notepad.exe"):
+                        pids.add(pid)
+            finally:
+                kernel32.CloseHandle(handle)
+        return pids
+
+    pids = notepad_pids()
+    if not pids:
+        return
+    # close blank windows politely (Don't save on any prompt)
+    for pid in pids:
+        for hwnd in _top_windows_of_pid(pid):
+            title = _window_title(hwnd)
+            if title in ("Untitled - Notepad", "*Untitled - Notepad"):
+                user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        time.sleep(0.4)
+        for pid in pids:
+            for hwnd in _top_windows_of_pid(pid):
+                if _window_title(hwnd) in ("Untitled - Notepad", "*Untitled - Notepad"):
+                    _answer_dont_save(hwnd)
+                    user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+    remaining = []
+    for pid in pids:
+        for hwnd in _top_windows_of_pid(pid):
+            title = _window_title(hwnd)
+            if title and title not in ("Untitled - Notepad",):
+                remaining.append(title)
+    if remaining:
+        raise RuntimeError(
+            "Notepad has open windows with documents ("
+            + "; ".join(remaining[:3])
+            + ") — close them first so Quiff gets a clean window."
         )
-        if tab_state.exists():
-            for junk in tab_state.glob("*.bin"):
-                junk.unlink(missing_ok=True)
+    tab_state = Path(os.environ.get("LOCALAPPDATA", "")) / (
+        "Packages/Microsoft.WindowsNotepad_8wekyb3d8bbwe/LocalState/TabState"
+    )
+    if tab_state.exists():
+        for junk in tab_state.glob("*.bin"):
+            junk.unlink(missing_ok=True)
 
 
 def _start_url(task: Task) -> str | None:

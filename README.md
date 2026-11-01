@@ -59,7 +59,8 @@ echo META_API_KEY=your-key > .env      # from ai.developer.meta.com
 uv run quiff tasks                     # list the 20-task suite
 uv run quiff run b05 --headed          # the model logs into a public test site
 uv run quiff run b04 --interactive     # the approval guard asks before "Submit order"
-uv run quiff run d01 --replay          # the recorded desktop flow, no model calls
+uv run quiff run d01                   # records a replayable flow (run once first)
+uv run quiff run d01 --replay          # then replay it: no model calls, machine speed
 uv run python spikes/model_probe.py    # the go/no-go benchmark yourself
 ```
 

@@ -2,10 +2,8 @@
 
 Which action, which row, did the last step work, and is the subgoal done.
 Only the goal, subgoal, filtered action table and last two actions are sent.
-
-Until the model client lands (waiting on hackathon API credits), ScriptedDecider
-answers from a fixed list of steps so the loop, acting and checking can be built
-and tested with zero model calls.
+MuseDecider (models/meta.py) is the live implementation; MatchDecider below is
+the model-free stand-in for tests and deterministic demos.
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ from typing import Protocol, Sequence
 
 from .observe.table import ActionTable
 
-ACTIONS = ("click", "type", "select", "press", "done", "answer", "wait")
+ACTIONS = ("click", "type", "select", "press", "save_as", "done", "answer", "wait")
 
 
 @dataclass(frozen=True)
@@ -52,27 +50,6 @@ class Decider(Protocol):
     ) -> Decision: ...
 
 
-@dataclass
-class ScriptedDecider:
-    """A stand-in decision model: replays a fixed list of decisions in order.
-
-    Lets the engine run end to end with no model call, and gives the demo a
-    deterministic path when a live model is not wanted.
-    """
-
-    steps: list[Decision] = field(default_factory=list)
-    _next: int = 0
-
-    async def decide(
-        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision]
-    ) -> Decision:
-        if self._next >= len(self.steps):
-            return Decision(action="done", subgoal_done=True, note="script exhausted")
-        decision = self.steps[self._next]
-        object.__setattr__(self, "_next", self._next + 1)
-        return decision
-
-
 @dataclass(frozen=True)
 class MatchStep:
     """One scripted step whose row is found in the live table at decide time.
@@ -102,7 +79,8 @@ class MatchDecider:
         self._next = 0
 
     async def decide(
-        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision]
+        self, goal: str, subgoal: str, table: ActionTable, history: Sequence[Decision],
+        last_result: str | None = None,
     ) -> Decision:
         if self._next >= len(self.steps):
             return Decision(action="done", subgoal_done=True, note="script finished")
@@ -113,7 +91,8 @@ class MatchDecider:
                 action=step.action, values=step.values, answer=step.answer, subgoal_done=True
             )
         for row in table.rows:
-            if step.role_contains in row.role and step.name_contains.lower() in row.name.lower():
+            if (step.role_contains.lower() in row.role.lower()
+                    and step.name_contains.lower() in row.name.lower()):
                 return Decision(
                     action=step.action,
                     row=row.index,

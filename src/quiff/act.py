@@ -74,9 +74,9 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
             return ActResult(ok=False, detail="page changed since the last observation; re-observe")
 
     if decision.action == "press":
-        key = " ".join(decision.values).strip() or "Enter"
-        await _press_key(cdp, key)
-        return ActResult(ok=True, detail=f"pressed {key}")
+        combo = " ".join(decision.values).strip() or "Enter"
+        await _press_key(cdp, combo)
+        return ActResult(ok=True, detail=f"pressed {combo}")
 
     if decision.action in ("done", "answer"):
         return ActResult(ok=True, detail=decision.action)
@@ -184,17 +184,35 @@ async def _select_all(cdp) -> None:
         await cdp.call("Input.dispatchKeyEvent", **params)
 
 
-async def _press_key(cdp, key: str) -> None:
-    key = key.strip().strip("+").split("+")[-1].lower()
-    code, vk, text = _key_spec(key)
-    await cdp.call(
-        "Input.dispatchKeyEvent",
-        type="rawKeyDown", key=key, windowsVirtualKeyCode=vk, code=code, text=text,
-    )
-    await cdp.call(
-        "Input.dispatchKeyEvent",
-        type="keyUp", key=key, windowsVirtualKeyCode=vk, code=code,
-    )
+CDP_MODIFIERS = {"ctrl": 2, "alt": 1, "meta": 4, "shift": 8}
+
+
+async def _press_key(cdp, combo: str) -> None:
+    """Press e.g. 'Enter' or 'ctrl+s' — modifiers were silently dropped
+    before, which made the approval guard approve a different action."""
+    parts = [part.strip().lower() for part in combo.split("+") if part.strip()]
+    modifiers = 0
+    modifier_keys = []
+    for part in parts:
+        if part in CDP_MODIFIERS:
+            modifiers |= CDP_MODIFIERS[part]
+            modifier_keys.append(part)
+    keys = [k for k in parts if k not in CDP_MODIFIERS] or ["Enter"]
+    for mk in modifier_keys:
+        code, vk, text = _key_spec(mk)
+        await cdp.call("Input.dispatchKeyEvent", type="rawKeyDown", key=mk,
+                       windowsVirtualKeyCode=vk, code=code, modifiers=modifiers)
+    for key in keys:
+        code, vk, text = _key_spec(key)
+        await cdp.call("Input.dispatchKeyEvent", type="rawKeyDown", key=key,
+                       windowsVirtualKeyCode=vk, code=code, text=text,
+                       modifiers=modifiers)
+        await cdp.call("Input.dispatchKeyEvent", type="keyUp", key=key,
+                       windowsVirtualKeyCode=vk, code=code, modifiers=modifiers)
+    for mk in reversed(modifier_keys):
+        code, vk, _ = _key_spec(mk)
+        await cdp.call("Input.dispatchKeyEvent", type="keyUp", key=mk,
+                       windowsVirtualKeyCode=vk, code=code, modifiers=modifiers)
 
 
 def _key_spec(key: str) -> tuple[str, int, str]:

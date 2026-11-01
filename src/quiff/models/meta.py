@@ -230,10 +230,11 @@ class MuseDecider:
         self.max_tokens = max_tokens
         self.allow_wait = allow_wait
 
-    async def decide(self, goal, subgoal, table: ActionTable, history):
+    async def decide(self, goal, subgoal, table: ActionTable, history,
+                     last_result: str | None = None):
         import asyncio
 
-        prompt = decision_prompt(goal, subgoal, table, history)
+        prompt = decision_prompt(goal, subgoal, table, history, last_result)
         parsed, reply = await asyncio.to_thread(
             self.client.structured, prompt, decision_schema(self.allow_wait),
             name="decision", effort=self.effort, max_tokens=self.max_tokens,

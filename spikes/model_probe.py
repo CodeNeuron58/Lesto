@@ -133,6 +133,7 @@ def main() -> None:
     print(f"\nVERDICT: {verdict}")
 
     out = Path("runs") / f"model-probe-{time.strftime('%Y-%m-%d-%H%M%S')}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"Saved {out}")
 

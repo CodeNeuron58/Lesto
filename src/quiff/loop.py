@@ -7,9 +7,12 @@ replay and frontier rescue plug into the same step order.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field, replace
 from typing import Sequence
+
+import re
 
 from .act import ActResult, act, needs_approval
 from .decide import Decision, Decider
@@ -95,20 +98,43 @@ class FastLoop:
         stop_reason = "max steps reached"
         success = False
         waits = 0
-        consecutive_waits = 0
         force_rescue = False
+        last_result: str | None = None
 
         for step_no in range(1, self.max_steps + 1):
             decide_start = time.perf_counter()
-            decision = await self.decider.decide(goal, subgoal or "", table, history)
+            try:
+                decision = await self.decider.decide(
+                    goal, subgoal or "", table, history, last_result=last_result
+                )
+            except Exception as first_error:
+                # a transient 429/timeout must not kill the run: retry once,
+                # then let the rescuer (a second model) take the step
+                await asyncio.sleep(2.0)
+                try:
+                    decision = await self.decider.decide(
+                        goal, subgoal or "", table, history, last_result=last_result
+                    )
+                except Exception:
+                    if self.rescuer is None:
+                        stop_reason = f"decider failed twice: {first_error}"
+                        success = False
+                        break
+                    try:
+                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision = replace(decision, note=f"{decision.note} · rescued".strip(" ·"))
+                    except Exception as exc:
+                        stop_reason = f"decider and rescuer failed: {first_error} / {exc}"
+                        success = False
+                        break
             decide_ms = int((time.perf_counter() - decide_start) * 1000)
 
-            if decision.action != "wait":
-                consecutive_waits = 0
             if force_rescue or decision.confidence < LOW_CONFIDENCE:
                 if self.rescuer is not None:
                     try:
-                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision = await self.rescuer.decide(
+                            goal, subgoal or "", table, history, last_result=last_result
+                        )
                         decision = replace(
                             decision, note=f"{decision.note} · rescued".strip(" ·")
                         )
@@ -125,7 +151,9 @@ class FastLoop:
                 consecutive_waits += 1
                 if waits > MAX_WAITS and self.rescuer is not None:
                     try:
-                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision = await self.rescuer.decide(
+                            goal, subgoal or "", table, history, last_result=last_result
+                        )
                         decision = replace(
                             decision, note=f"{decision.note} · rescued".strip(" ·")
                         )
@@ -171,6 +199,7 @@ class FastLoop:
 
             result = await act(self.observer, table, decision)
             history.append(decision)
+            last_result = ("OK: " if result.ok else "FAILED: ") + result.detail
             self._log(step_no, decision, result, table, decide_ms, observe_ms)
 
             if not result.ok:
@@ -230,7 +259,7 @@ class FastLoop:
                 "decision": {
                     "action": decision.action,
                     "row": decision.row,
-                    "values": list(decision.values),
+                    "values": _redacted(decision, table),
                     "confidence": decision.confidence,
                     "note": decision.note,
                 },
@@ -241,6 +270,17 @@ class FastLoop:
         )
 
 
-def recent_actions(history: Sequence[Decision], count: int = 2) -> list[Decision]:
-    """The last actions sent to the decider as context (the plan caps it at two)."""
-    return list(history[-count:])
+SENSITIVE_FIELD = re.compile(
+    r"pass(word)?|pwd|otp|secret|token|api[- _]?key|card|cvv|cvc|pin", re.I
+)
+
+
+def _redacted(decision: Decision, table: ActionTable) -> list[str]:
+    """Values as safe to write to disk: text typed into a field whose name
+    looks like a credential is masked. Everything else logs as-is."""
+    if decision.action != "type" or decision.row is None:
+        return list(decision.values)
+    row = table.by_index(decision.row)
+    if row is not None and SENSITIVE_FIELD.search(row.role + " " + row.name):
+        return ["[REDACTED]"] * len(decision.values)
+    return list(decision.values)
