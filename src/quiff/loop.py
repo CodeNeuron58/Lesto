@@ -23,6 +23,7 @@ from .verify import LoopDetector
 
 MAX_STEPS = 25
 MAX_WAITS = 5
+MAX_CORRECTIONS = 2
 LOW_CONFIDENCE = 0.5
 
 
@@ -64,6 +65,7 @@ class FastLoop:
         max_steps: int = MAX_STEPS,
         rescuer: Decider | None = None,
         approver=None,
+        verify_after_done=None,
     ) -> None:
         self.observer = observer
         self.decider = decider
@@ -71,6 +73,9 @@ class FastLoop:
         self.max_steps = max_steps
         self.rescuer = rescuer
         self.approver = approver
+        self.verify_after_done = verify_after_done
+        """async callable -> (passed, feedback); lets the referee correct the
+        model once when it declares done but the checks disagree."""
         """async callable (reason) -> bool; the only way past the approval guard."""
 
     async def run(
@@ -99,6 +104,7 @@ class FastLoop:
         success = False
         waits = 0
         force_rescue = False
+        corrected = False
         last_result: str | None = None
 
         for step_no in range(1, self.max_steps + 1):
@@ -169,6 +175,21 @@ class FastLoop:
                     continue
 
             if decision.action == "done":
+                if self.verify_after_done is not None and corrected < MAX_CORRECTIONS:
+                    passed, feedback = await self.verify_after_done()
+                    if passed:
+                        success = True
+                        stop_reason = "done, checks pass"
+                        self._log(step_no, decision, None, table, decide_ms, observe_ms)
+                        break
+                    corrected += 1
+                    last_result = f"the checks disagree — the task is NOT complete: {feedback}. Fix it."
+                    stop_reason = "correction round after failed checks"
+                    decision = Decision(action="wait", note="checks failed; correcting")
+                    self._log(step_no, decision, None, table, decide_ms, observe_ms)
+                    await self.observer.wait_settled()
+                    table = await self.observer.read()
+                    continue
                 success = bool(decision.subgoal_done is not False)
                 stop_reason = decision.note or "decider said done"
                 self._log(step_no, decision, None, table, decide_ms, observe_ms)

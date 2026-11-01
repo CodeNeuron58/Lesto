@@ -38,7 +38,7 @@ async def plan(goal: str, client: ChatClient | None = None) -> list[str]:
         f"Goal: {goal}"
     )
     parsed, reply = await asyncio.to_thread(
-        client.structured, prompt, PLAN_SCHEMA, name="plan", effort="high", max_tokens=1024
+        client.structured, prompt, PLAN_SCHEMA, name="plan", effort="high", max_tokens=3072
     )
     subgoals = [s.strip() for s in parsed.get("subgoals", []) if s and s.strip()]
     return subgoals or [goal]

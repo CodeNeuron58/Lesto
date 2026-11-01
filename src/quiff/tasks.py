@@ -167,8 +167,15 @@ async def run_task(
     if task.app != "chrome":
         _preflight_desktop_app(task)
 
+    async def verify_after_done():
+        page = ObserverPage(observer) if task.app == "chrome" else None
+        checks = await run_checks(task.checks, answer=None, page=page,
+                                  sandbox=sandbox, started_ts=started_ts)
+        failed = [f"{c.check_type}: {c.detail}" for c in checks if not c.ok]
+        return (not failed), ("; ".join(failed) if failed else "all checks pass")
+
     loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer,
-                    approver=approver)
+                    approver=approver, verify_after_done=verify_after_done)
     subgoal = "; ".join(planned) if planned else task.goal
     if task.app == "chrome":
         result = await loop.run(task.goal, start_url=_start_url(task), subgoal=subgoal)
@@ -184,6 +191,12 @@ async def run_task(
                 " When a Save dialog appears, type the file's FULL path — "
                 f"folder and name together, e.g. {sandbox}/filename.txt — "
                 "into the File name box."
+            )
+        if "rename" in task.goal.lower():
+            desktop_goal += (
+                " Note: Explorer may hide file extensions — a rename can "
+                "produce a doubled name like final.txt.txt. If a listed file's "
+                "name looks doubled, rename it again typing only the base name."
             )
         if planned:
             desktop_goal = desktop_goal + " Subgoals: " + "; ".join(planned)
