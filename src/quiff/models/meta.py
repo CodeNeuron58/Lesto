@@ -107,6 +107,13 @@ class ChatClient:
             raise ModelError(f"HTTP {response.status_code}: {response.text[:300]}")
         data = response.json()
         choice = data["choices"][0]
+        if not (choice["message"].get("content") or "").strip()                 and choice.get("finish_reason") == "length":
+            reasoning = (data.get("usage", {}).get("completion_tokens_details", {})
+                         .get("reasoning_tokens", 0))
+            raise ModelError(
+                f"hit max_tokens: the model spent {reasoning} tokens reasoning and never "
+                f"wrote the answer — raise max_tokens"
+            )
         usage = data.get("usage", {})
         return ModelReply(
             content=choice["message"]["content"] or "",
@@ -117,9 +124,10 @@ class ChatClient:
         )
 
     def structured(self, prompt: str, schema: dict, *, name: str = "reply",
-                   effort: str | None = None) -> tuple[dict, ModelReply]:
+                   effort: str | None = None, max_tokens: int = 2048) -> tuple[dict, ModelReply]:
         """Ask for JSON matching the schema and parse it; raises on invalid JSON."""
-        reply = self.chat(prompt, schema=schema, schema_name=name, effort=effort)
+        reply = self.chat(prompt, schema=schema, schema_name=name, effort=effort,
+                          max_tokens=max_tokens)
         try:
             return json.loads(reply.content), reply
         except json.JSONDecodeError as exc:
@@ -210,7 +218,7 @@ class MuseDecider:
         prompt = decision_prompt(goal, subgoal, table, history)
         parsed, reply = await asyncio.to_thread(
             self.client.structured, prompt, DECISION_SCHEMA, name="decision",
-            effort=self.effort,
+            effort=self.effort, max_tokens=2048,
         )
         action = parsed.get("action", "done")
         row = parsed.get("row")
