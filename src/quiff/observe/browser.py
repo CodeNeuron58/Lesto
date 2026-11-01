@@ -267,7 +267,10 @@ class BrowserObserver:
         try:
             return await self._cdp.call(method, timeout=timeout, **params)
         except BrowserError as exc:
-            if "not attached" not in str(exc).lower():
+            text = str(exc).lower()
+            if not any(sig in text for sig in (
+                "not attached", "no close frame", "connection closed", "target closed",
+            )):
                 raise
             await self.reconnect()
             return await self._cdp.call(method, timeout=timeout, **params)

@@ -166,7 +166,7 @@ def decision_schema(allow_wait: bool = True, allow_navigate: bool = True) -> dic
     'navigate' (desktop apps have no address bar). Browser deciders get both."""
     actions = ["click", "type", "select", "press"] + (
         ["wait"] if allow_wait else []
-    ) + (["navigate"] if allow_navigate else []) + ["save_as", "done", "answer"]
+    ) + (["navigate", "download"] if allow_navigate else []) + ["save_as", "done", "answer"]
     schema = json.loads(json.dumps(DECISION_SCHEMA))
     schema["properties"]["action"]["enum"] = actions
     return schema
@@ -206,8 +206,12 @@ def decision_prompt(goal: str, subgoal: str, table: ActionTable,
         f"Result of the last action: {last}\n\n"
         "Reply with JSON only: pick ONE next action. 'click'/'type'/'select' need a row "
         "number from the table; 'type' fills 'values' with the text; 'press' puts the key "
-        "in 'values' (e.g. [\"Enter\"]); 'navigate' puts the full URL in 'values' and "
-        "goes there directly (browser only); 'save_as' is for saving the current document: put "
+        "in 'values' (e.g. [\"Enter\"]); 'navigate' puts the full URL in 'values' and goes "
+        "there directly — IMPORTANT: you cannot reach the browser's address bar with "
+        "keys like ctrl+l; it is not part of the page. To open a different URL, always "
+        "use 'navigate'; 'download' fetches a URL to disk — 'values' is "
+        "[url, destination-path] — use it when a file should be downloaded rather than "
+        "viewed; 'save_as' is for saving the current document: put "
         "the complete destination path in 'values' (e.g. [\"C:\\folder\\file.txt\"]) and "
         "the driver opens the menu and dialog itself; 'wait' ONLY while an action is "
         "clearly still in progress; 'done' when the subgoal is complete; 'answer' puts "

@@ -73,11 +73,18 @@ class _Recovering:
     def __init__(self, observer):
         self._observer = observer
 
+    @staticmethod
+    def _is_session_drop(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(sig in text for sig in (
+            "not attached", "no close frame", "connection closed", "target closed",
+        ))
+
     async def call(self, method: str, timeout: float = 15.0, **params):
         try:
             return await self._observer.connection().call(method, timeout=timeout, **params)
         except BrowserError as exc:
-            if "not attached" not in str(exc).lower():
+            if not self._is_session_drop(exc):
                 raise
             await self._observer.reconnect()
             return await self._observer.connection().call(method, timeout=timeout, **params)
@@ -137,6 +144,18 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
             if await _input_value(cdp, row) != text:
                 return ActResult(ok=False, detail=f"text did not land in [{decision.row}] {row.name!r}")
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
+
+    if decision.action == "download":
+        url = decision.values[0] if decision.values else ""
+        dest = Path(decision.values[1]).expanduser() if len(decision.values) > 1 else None
+        if not url or dest is None:
+            return ActResult(ok=False, detail="download needs a URL and a destination path")
+        import urllib.request
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(url, timeout=60.0) as response,                 open(dest, "wb") as out:
+            out.write(response.read())
+        return ActResult(ok=True, detail=f"downloaded {url} -> {dest}")
 
     if decision.action == "navigate":
         url = " ".join(decision.values).strip()

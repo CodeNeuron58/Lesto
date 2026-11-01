@@ -235,7 +235,8 @@ class FastLoop:
             else:
                 failed_acts = 0
 
-            ref = table.by_index(decision.row).ref if decision.row else decision.action
+            row = table.by_index(decision.row) if decision.row is not None else None
+            ref = row.ref if row is not None else decision.action
             if detector.check(decision.action, ref or "", table.title):
                 if self.rescuer is not None and not force_rescue:
                     force_rescue = True  # one rescue attempt per detected loop
