@@ -52,6 +52,8 @@ class ActionTable:
     url: str | None = None
     read_ms: int | None = None
     page_key: str | None = None
+    omitted: int = 0
+    """Actionable controls filtered out (viewport bounds, cap) — honesty flag."""
     """Fingerprint of the page this table was read from; the acting stage
     refuses to act when the live key no longer matches (jev-ra fresh())."""
 
@@ -63,6 +65,8 @@ class ActionTable:
 
     def render(self) -> str:
         lines = [f"# {self.title}" + (f" — {self.url}" if self.url else "")]
+        if self.omitted:
+            lines.append(f"# ({self.omitted} more controls exist outside the current view or beyond the cap — scroll and re-observe to see them)")
         for row in self.rows:
             line = f'[{row.index}] {row.role} "{_clean(row.name, NAME_LIMIT)}"'
             if row.value is not None:

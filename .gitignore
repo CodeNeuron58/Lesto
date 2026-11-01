@@ -21,3 +21,9 @@ runs/
 
 # ZCode local state (plans, session files)
 .zcode/
+
+# third-party research clones (reference only)
+cua_files/
+cua_skills/
+cua_s1/
+cua_blog/

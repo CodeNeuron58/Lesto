@@ -41,6 +41,34 @@ ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
 }
 # Roles that stay useful without a name; everything else is dropped when
 # unnamed. Bare checkboxes and radios are common and perfectly clickable.
+MAX_TABLE_ROWS = 250
+"""Cua caps candidates at 24, jev at 250 — beyond this the model wanders."""
+
+
+def _filter_viewport(rows: list[ActionRow], bounds: dict[int, tuple[int, int, int, int]],
+                     viewport: tuple[int, int]) -> list[ActionRow]:
+    """Keep rows whose bounding box intersects the viewport.
+
+    Elements without known bounds (rare) are kept — truncation does not
+    prove absence (Cua skill doc). Rows are kept in table order.
+    """
+    vw, vh = viewport
+    kept: list[ActionRow] = []
+    for row in rows:
+        target = row.target
+        b = bounds.get(target) if isinstance(target, int) else None
+        if b is None:
+            kept.append(row)
+            continue
+        x, y, w, h = b
+        if w <= 0 or h <= 0:
+            continue  # collapsed: not actionable
+        if x + w < 0 or y + h < 0 or x > vw or y > vh:
+            continue  # entirely outside the viewport
+        kept.append(row)
+    return kept
+
+
 UNNAMED_OK = {"textbox", "searchbox", "combobox", "slider", "spinbutton",
               "checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"}
 
@@ -411,12 +439,46 @@ class BrowserObserver:
         started = time.perf_counter()
         tree = await self._cdp.call("Accessibility.getFullAXTree", timeout=30.0)
         rows = _table_rows(tree.get("nodes", []))
+        bounds, viewport = await self._viewport_bounds()
+        rows = _filter_viewport(rows, bounds, viewport)
+        omitted = max(0, len(rows) - MAX_TABLE_ROWS)
+        rows = rows[:MAX_TABLE_ROWS]
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         page_key = await self._page_key()
         return ActionTable(
             title=title or "(untitled page)", rows=tuple(rows), url=url or None,
-            read_ms=elapsed_ms, page_key=page_key,
+            read_ms=elapsed_ms, page_key=page_key, omitted=omitted,
         )
+
+    async def _viewport_bounds(self) -> tuple[dict[int, tuple[int, int, int, int]], tuple[int, int]]:
+        """backendNodeId -> (x, y, w, h) from one DOMSnapshot, plus the viewport.
+
+        github.com exposes 100+ actionable rows page-wide; only what the
+        viewport actually shows should reach the decision model (jev
+        snapshot.js hit-tests; Cua caps at 24). One snapshot call, one dict.
+        """
+        assert self._cdp
+        view = {"width": 1280, "height": 900}
+        try:
+            w, h = (int(v) for v in self.window_size.split(","))
+            view = {"width": w, "height": h}
+        except (ValueError, AttributeError):
+            pass
+        try:
+            snap = await self._cdp.call("DOMSnapshot.captureSnapshot", timeout=15.0)
+        except BrowserError:
+            return {}, (view["width"], view["height"])
+        bounds: dict[int, tuple[int, int, int, int]] = {}
+        for doc in snap.get("documents", []):
+            layout = doc.get("layout", {})
+            node_bounds = layout.get("bounds", [])
+            backend_ids = (doc.get("nodes", {}) or {}).get("backendNodeId", [])
+            for i, backend_id in enumerate(backend_ids):
+                if i < len(node_bounds):
+                    b = node_bounds[i]
+                    if isinstance(b, list) and len(b) >= 4:
+                        bounds[backend_id] = (b[0], b[1], b[2], b[3])
+        return bounds, (view["width"], view["height"])
 
     async def _page_key(self) -> str | None:
         """A cheap fingerprint of the page the table was read from.
