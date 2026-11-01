@@ -143,8 +143,12 @@ class BrowserObserver:
         port: int = 9222,
         chrome_path: str | None = None,
         window_size: str = "1280,900",
+        direct: bool = True,
     ) -> None:
+        """direct=True bypasses the system proxy entirely: the machine's proxy
+        was intercepting even 127.0.0.1 and intermittently breaking pages."""
         self.headless = headless
+        self.direct = direct
         self.port = port
         self.window_size = window_size
         self._chrome = chrome_path or os.environ.get("QUIFF_CHROME") or _find_chrome()
@@ -226,6 +230,8 @@ class BrowserObserver:
             "--mute-audio",
             f"--window-size={self.window_size.replace(',', 'x')}",
         ]
+        if self.direct:
+            flags.append("--no-proxy-server")
         if self.headless:
             flags.append("--headless=new")
         self._process = subprocess.Popen(

@@ -37,7 +37,7 @@ async def plan(goal: str, client: ChatClient | None = None) -> list[str]:
         f"Goal: {goal}"
     )
     parsed, reply = await asyncio.to_thread(
-        client.structured, prompt, PLAN_SCHEMA, name="plan", effort="high", max_tokens=300
+        client.structured, prompt, PLAN_SCHEMA, name="plan", effort="high", max_tokens=1024
     )
     subgoals = [s.strip() for s in parsed.get("subgoals", []) if s and s.strip()]
     return subgoals or [goal]
@@ -52,6 +52,6 @@ async def rescue(goal: str, subgoal: str, problem: str, client: ChatClient | Non
         'Reply with JSON only: {"advice": "one or two sentences on what to try next"}'
     )
     parsed, _ = await asyncio.to_thread(
-        client.structured, prompt, ADVICE_SCHEMA, name="rescue", effort="high", max_tokens=200
+        client.structured, prompt, ADVICE_SCHEMA, name="rescue", effort="high", max_tokens=1024
     )
     return parsed.get("advice", "try a different approach")

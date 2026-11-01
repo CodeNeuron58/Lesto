@@ -100,10 +100,21 @@ async def _dispatch(args: argparse.Namespace) -> None:
                 answer = await _aio.to_thread(input, prompt)
                 return answer.strip().lower().startswith("y")
 
+        planned = None
+        if not args.replay and not args.scripted:
+            try:
+                from quiff.plan import plan
+
+                planned = await plan(task.goal)
+                print("plan     " + " -> ".join(planned[:4]) + (" -> ..." if len(planned) > 4 else ""))
+            except Exception as exc:
+                print(f"plan     (unavailable: {exc})")
+
         try:
             run = await run_task(task, decider, observer, max_steps=args.max_steps,
                                  rescuer=rescuer if not args.replay and not args.scripted else None,
-                                 approver=approver)
+                                 approver=approver,
+                                 planned=planned)
         finally:
             await observer.stop()
         print(f"task     {run.task.id} ({run.task.split})")

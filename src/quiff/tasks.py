@@ -156,6 +156,7 @@ async def run_task(
     max_steps: int = 25,
     rescuer: Decider | None = None,
     approver=None,
+    planned: list[str] | None = None,
 ) -> TaskRun:
     """Run one task: sandbox, loop, then the automatic checks."""
     sandbox = setup_sandbox(task)
@@ -168,8 +169,9 @@ async def run_task(
 
     loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer,
                     approver=approver)
+    subgoal = "; ".join(planned) if planned else task.goal
     if task.app == "chrome":
-        result = await loop.run(task.goal, start_url=_start_url(task), subgoal=task.goal)
+        result = await loop.run(task.goal, start_url=_start_url(task), subgoal=subgoal)
     else:
         from quiff.observe.desktop import DesktopObserver
 
@@ -182,8 +184,14 @@ async def run_task(
             f"appears, type the file's FULL path — folder and name together, "
             f"e.g. {sandbox}\filename.txt — into the File name box.)"
         )
+        if planned:
+            desktop_goal = desktop_goal + " Subgoals: " + "; ".join(planned)
         result = await loop.run(desktop_goal, subgoal=desktop_goal)
     page = ObserverPage(observer) if task.app == "chrome" else None
+    if page is not None:
+        from .verify import wait_stable_url
+
+        await wait_stable_url(observer)
     checks = await run_checks(
         task.checks,
         answer=result.answer,

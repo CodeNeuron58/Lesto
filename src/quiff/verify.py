@@ -51,6 +51,31 @@ class Page:
             return ""
 
 
+async def wait_stable_url(observer: BrowserObserver, *, samples: int = 2,
+                          interval: float = 0.25, timeout: float = 6.0) -> str:
+    """Wait until the page URL stops changing and return it.
+
+    After the last action, a form POST or redirect can still be in flight;
+    checking the page before it settles races the navigation. Evidence, not
+    a clock: the URL must read the same on `samples` consecutive reads.
+    """
+    page = Page(observer)
+    last = await page.url()
+    stable = 0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(interval)
+        current = await page.url()
+        if current == last:
+            stable += 1
+            if stable >= samples - 1:
+                return current
+        else:
+            stable = 0
+        last = current
+    return last
+
+
 async def wait_url(observer: BrowserObserver, pattern: str, *, timeout: float = 15.0) -> bool:
     """Wait until the page URL matches a regular expression."""
     compiled = re.compile(pattern)
