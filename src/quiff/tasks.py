@@ -176,14 +176,15 @@ async def run_task(
         from quiff.observe.desktop import DesktopObserver
 
         await observer.open(desktop_argv(task), cwd=str(sandbox))
-        # A human doing the task knows their own folder — and knows that
-        # saving into it means typing the full path in the Save dialog.
-        # Tell the agent the same thing.
-        desktop_goal = (
-            f"{task.goal} (The task folder is: {sandbox}. When a Save dialog "
-            f"appears, type the file's FULL path — folder and name together, "
-            f"e.g. {sandbox}/filename.txt — into the File name box.)"
-        )
+        # A human doing the task knows their own folder; tell the agent too.
+        # The Save-dialog hint is only relevant for tasks that actually save.
+        desktop_goal = f"{task.goal} (The task folder is: {sandbox})"
+        if "save" in task.goal.lower():
+            desktop_goal += (
+                " When a Save dialog appears, type the file's FULL path — "
+                f"folder and name together, e.g. {sandbox}/filename.txt — "
+                "into the File name box."
+            )
         if planned:
             desktop_goal = desktop_goal + " Subgoals: " + "; ".join(planned)
         result = await loop.run(desktop_goal, subgoal=desktop_goal)

@@ -18,3 +18,6 @@ context/
 logs/
 runs/
 .DS_Store
+
+# ZCode local state (plans, session files)
+.zcode/

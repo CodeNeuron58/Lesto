@@ -248,6 +248,8 @@ def _key_spec(key: str) -> tuple[str, int, str]:
         "arrowright": ("ArrowRight", 39, ""),
         "pagedown": ("PageDown", 34, ""),
         "pageup": ("PageUp", 33, ""),
+        "delete": ("Delete", 46, ""),
+        **{f"f{i}": (f"F{i}", 0x70 + i - 1, "") for i in range(1, 13)},
     }
     return specs.get(key, (key.capitalize(), ord(key.upper()[:1]) if key else 0, key[:1]))
 
@@ -320,6 +322,8 @@ VK_CODES = {
     "enter": 0x0D, "tab": 0x09, "escape": 0x1B, "backspace": 0x08, "space": 0x20,
     "arrowup": 0x26, "arrowdown": 0x28, "arrowleft": 0x25, "arrowright": 0x27,
     "pageup": 0x21, "pagedown": 0x22, "home": 0x24, "end": 0x23,
+    "delete": 0x2E, "insert": 0x2D,
+    **{f"f{i}": 0x70 + i - 1 for i in range(1, 13)},  # F1..F12 = 0x70..0x7B
 }
 VK_MODIFIERS = {"ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B}
 

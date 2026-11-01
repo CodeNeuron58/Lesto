@@ -75,3 +75,17 @@ async def test_type_verified_no_fallback_when_landed():
     assert result.ok
     assert not [p for m, p in observer.cdp.calls
                 if m == "Runtime.callFunctionOn" and "this.value = t" in p.get("functionDeclaration", "")]
+
+
+def test_f_keys_resolve_on_both_paths():
+    # regression: "f2" used to resolve to the letter F (vk 0x46 / 70)
+    from quiff.act import VK_CODES, _key_spec
+    for i in range(1, 13):
+        assert VK_CODES[f"f{i}"] == 0x70 + i - 1
+        assert _key_spec(f"f{i}")[1] == 0x70 + i - 1
+
+
+def test_delete_key_in_both_maps():
+    from quiff.act import VK_CODES, _key_spec
+    assert VK_CODES["delete"] == 0x2E
+    assert _key_spec("delete") == ("Delete", 46, "")
