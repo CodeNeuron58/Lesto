@@ -70,6 +70,7 @@ class Handler(BaseHTTPRequestHandler):
         if "username=tomsmith" in form and "password=SuperSecretPassword%21" in form:
             self.send_response(302)
             self.send_header("Location", "/secure")
+            self.send_header("Content-Length", "0")  # keep-alive needs the length
             self.end_headers()
         else:
             self._send(FAIL_PAGE)

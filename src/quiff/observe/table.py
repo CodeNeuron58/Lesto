@@ -51,6 +51,9 @@ class ActionTable:
     rows: tuple[ActionRow, ...]
     url: str | None = None
     read_ms: int | None = None
+    page_key: str | None = None
+    """Fingerprint of the page this table was read from; the acting stage
+    refuses to act when the live key no longer matches (jev-ra fresh())."""
 
     def by_index(self, index: int) -> ActionRow | None:
         for row in self.rows:

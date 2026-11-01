@@ -68,6 +68,11 @@ async def act(observer, table: ActionTable, decision: Decision) -> ActResult:
 async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: Decision) -> ActResult:
     cdp = observer.connection()
 
+    if table.page_key:
+        live = await observer.page_key()
+        if live is not None and live != table.page_key:
+            return ActResult(ok=False, detail="page changed since the last observation; re-observe")
+
     if decision.action == "press":
         key = " ".join(decision.values).strip() or "Enter"
         await _press_key(cdp, key)
@@ -102,6 +107,14 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
         await _select_all(cdp)
         if text:
             await cdp.call("Input.insertText", text=text)
+        # verify by reading the field back; if the text didn't land (focus
+        # missed, warm-tab quirk), set it through JS with real events so the
+        # page sees it — jev-ra/Browser Use input-readback pattern.
+        if await _input_value(cdp, row) != text:
+            await _focus(cdp, row)
+            await _js_set_value(cdp, row, text)
+            if await _input_value(cdp, row) != text:
+                return ActResult(ok=False, detail=f"text did not land in [{decision.row}] {row.name!r}")
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
 
     if decision.action == "select":
@@ -198,6 +211,37 @@ def _key_spec(key: str) -> tuple[str, int, str]:
         "pageup": ("PageUp", 33, ""),
     }
     return specs.get(key, (key.capitalize(), ord(key.upper()[:1]) if key else 0, key[:1]))
+
+
+async def _input_value(cdp, row: ActionRow) -> str | None:
+    resolved = await cdp.call("DOM.resolveNode", backendNodeId=row.target)
+    object_id = (resolved.get("object") or {}).get("objectId")
+    if not object_id:
+        return None
+    try:
+        probe = await cdp.call(
+            "Runtime.callFunctionOn", objectId=object_id,
+            functionDeclaration="function () { return this.value; }", returnByValue=True,
+        )
+        return probe.get("result", {}).get("value")
+    except BrowserError:
+        return None
+
+
+async def _js_set_value(cdp, row: ActionRow, text: str) -> None:
+    resolved = await cdp.call("DOM.resolveNode", backendNodeId=row.target)
+    object_id = (resolved.get("object") or {}).get("objectId")
+    if not object_id:
+        return
+    await cdp.call(
+        "Runtime.callFunctionOn", objectId=object_id,
+        functionDeclaration=(
+            "function (t) { this.value = t;"
+            " this.dispatchEvent(new Event('input', { bubbles: true }));"
+            " this.dispatchEvent(new Event('change', { bubbles: true })); }"
+        ),
+        arguments=[{"value": text}], returnByValue=True,
+    )
 
 
 async def _select_option(cdp, row: ActionRow, option: str) -> bool:

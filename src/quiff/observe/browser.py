@@ -112,6 +112,11 @@ class CDPConnection:
             self._pending.pop(call_id, None)
             raise BrowserError(f"{method} timed out after {timeout}s") from None
 
+    def drain_events(self) -> None:
+        """Consume everything buffered. Call before navigating: events still
+        queued belong to the page this navigation is leaving (jev-ra)."""
+        self._events.clear()
+
     async def next_event(self, method: str, timeout: float = 20.0) -> dict:
         assert self._event_arrived
         deadline = time.monotonic() + timeout
@@ -170,17 +175,55 @@ class BrowserObserver:
         return await self.goto(url)
 
     async def goto(self, url: str) -> ActionTable:
-        """Navigate the current tab and read the new page."""
+        """Navigate the current tab and read the new page.
+
+        jev-ra's lesson: never trust protocol events for the load lifecycle —
+        a buffered loadEventFired from the PREVIOUS navigation makes this
+        return instantly on a half-loaded page. Drain the buffer first, then
+        ask the page itself (an in-page load promise dies with the document,
+        so a navigation can never satisfy it stale).
+        """
         if self._cdp is None:
             raise BrowserError("no open tab; call open() first")
+        self._cdp.drain_events()
         await self._cdp.call("Page.navigate", url=url)
-        try:
-            await self._cdp.next_event("Page.loadEventFired", timeout=30.0)
-        except BrowserError:
-            pass  # keep going: some pages stream forever without a clean load event
+        await self._wait_page_loaded()
         await self._settle()
         info = await self._target_info()
         return await self._read(title=info.get("title", ""), url=info.get("url", url))
+
+    async def _wait_page_loaded(self, timeout: float = 30.0) -> None:
+        """Ask the page (not the protocol) whether it finished loading.
+
+        The evaluate runs an in-page promise that resolves on the load event
+        with a budget fallback. If the document is replaced mid-wait, the
+        evaluate fails with a context error and we simply ask again in the
+        new document (jev-ra session.py READY_JS pattern).
+        """
+        assert self._cdp
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                result = await self._cdp.call(
+                    "Runtime.evaluate",
+                    expression=(
+                        "(budget => new Promise(resolve => {"
+                        "  const done = () => resolve(document.readyState);"
+                        "  if (document.readyState === 'complete') return done();"
+                        "  addEventListener('load', done, {once: true});"
+                        "  setTimeout(done, budget);"
+                        "}))(4000)"
+                    ),
+                    awaitPromise=True,
+                    returnByValue=True,
+                    timeout=8.0,
+                )
+                if result.get("result", {}).get("value") == "complete":
+                    return
+            except BrowserError as exc:
+                if "context" not in str(exc).lower():
+                    await asyncio.sleep(0.2)  # real error: brief pause, keep asking
+            await asyncio.sleep(0.2)
 
     async def read(self) -> ActionTable:
         """Re-read the current page without navigating (fresh table between steps)."""
@@ -188,6 +231,11 @@ class BrowserObserver:
             raise BrowserError("no open tab; call open() first")
         info = await self._target_info()
         return await self._read(title=info.get("title", ""), url=info.get("url", ""))
+
+    async def page_key(self) -> str | None:
+        if self._cdp is None:
+            raise BrowserError("no open tab; call open() first")
+        return await self._page_key()
 
     def connection(self) -> CDPConnection:
         """The live DevTools connection, for the acting stage's input commands."""
@@ -283,22 +331,48 @@ class BrowserObserver:
         return await self.target_info()
 
     async def _settle(self) -> None:
-        """Wait until the document reports a settled readyState (bounded)."""
+        """Wait for the page to go still: readyState complete, no pending
+        resource requests, and a beat without DOM mutations.
+
+        One JS evaluation answers all three (Browser Use's pending-request
+        poll + jev-ra's MutationObserver stillness, converged). Bounded.
+        """
         assert self._cdp
-        deadline = time.monotonic() + 10.0
+        expression = (
+            "(async () => {"
+            "  const t0 = performance.now();"
+            "  let lastMut = performance.now();"
+            "  const obs = new MutationObserver(() => { lastMut = performance.now(); });"
+            "  obs.observe(document, {subtree: true, childList: true, attributes: true,"
+            "   characterData: true});"
+            "  while (performance.now() - t0 < 2500) {"
+            "    const ready = document.readyState === 'complete';"
+            "    const pending = performance.getEntriesByType('resource')"
+            "      .filter(r => r.responseEnd === 0 &&"
+            "        !/analytics|ads|doubleclick|googlesyndication/.test(r.name) &&"
+            "        performance.now() - r.startTime < 10000).length;"
+            "    const still = performance.now() - lastMut > 120;"
+            "    if (ready && pending === 0 && still) { obs.disconnect();"
+            "      return 'settled'; }"
+            "    await new Promise(r => setTimeout(r, 100));"
+            "  }"
+            "  obs.disconnect(); return 'budget';"
+            "})()"
+        )
+        deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             try:
-                result = await self._cdp.call(
-                    "Runtime.evaluate",
-                    expression="document.readyState",
-                    returnByValue=True,
-                    timeout=3.0,
+                await self._cdp.call(
+                    "Runtime.evaluate", expression=expression,
+                    awaitPromise=True, returnByValue=True, timeout=8.0,
                 )
-                if result.get("result", {}).get("value") in ("interactive", "complete"):
+                return  # settled or budget-exhausted
+            except BrowserError as exc:
+                # a navigation destroyed the page context mid-wait: ask again
+                # in the new document, until the deadline
+                if "context" not in str(exc).lower():
                     return
-            except BrowserError:
-                return  # page may be mid-navigation; the read will show it
-            await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
 
     async def _read(self, *, title: str, url: str) -> ActionTable:
         assert self._cdp
@@ -306,9 +380,32 @@ class BrowserObserver:
         tree = await self._cdp.call("Accessibility.getFullAXTree", timeout=30.0)
         rows = _table_rows(tree.get("nodes", []))
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        page_key = await self._page_key()
         return ActionTable(
-            title=title or "(untitled page)", rows=tuple(rows), url=url or None, read_ms=elapsed_ms
+            title=title or "(untitled page)", rows=tuple(rows), url=url or None,
+            read_ms=elapsed_ms, page_key=page_key,
         )
+
+    async def _page_key(self) -> str | None:
+        """A cheap fingerprint of the page the table was read from.
+
+        timeOrigin changes on every real navigation; href/scroll catch
+        same-document changes (jev-ra snapshot.js page_key). The acting stage
+        refuses to touch a page whose key no longer matches the observation.
+        """
+        try:
+            result = await self._cdp.call(
+                "Runtime.evaluate",
+                expression=(
+                    "JSON.stringify({t: performance.timeOrigin, h: location.href,"
+                    " x: scrollX, y: scrollY})"
+                ),
+                returnByValue=True,
+                timeout=5.0,
+            )
+            return result.get("result", {}).get("value")
+        except BrowserError:
+            return None
 
 
 # Roles that carry no action context of their own; they are walked through and
