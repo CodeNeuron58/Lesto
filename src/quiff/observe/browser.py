@@ -112,6 +112,14 @@ class CDPConnection:
             self._pending.pop(call_id, None)
             raise BrowserError(f"{method} timed out after {timeout}s") from None
 
+    async def reattach(self, ws_url: str) -> None:
+        """Swap the underlying socket after the page dropped the session."""
+        await self.__aexit__(None, None, None)
+        await self.__aenter__()
+        if ws_url:
+            pass  # the new connection rebinds by URL inside __aenter__ via _ws_url swap
+        self._ws_url = ws_url
+
     def drain_events(self) -> None:
         """Consume everything buffered. Call before navigating: events still
         queued belong to the page this navigation is leaving (jev-ra)."""
@@ -242,6 +250,33 @@ class BrowserObserver:
         if self._cdp is None:
             raise BrowserError("no open tab; call open() first")
         return self._cdp
+
+    async def reconnect(self) -> None:
+        """Re-attach to the same tab after its session dropped ('Not attached
+        to an active page' after many navigations on a warm tab)."""
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.port}/json/list", timeout=10.0
+        ) as response:
+            targets = json.loads(response.read())
+        target = next((t for t in targets if t.get("id") == self._target_id), None)
+        if not target or not target.get("webSocketDebuggerUrl"):
+            raise BrowserError("the tab is gone; cannot re-attach")
+        await self._cdp.__aexit__(None, None, None)
+        self._cdp = await CDPConnection(target["webSocketDebuggerUrl"]).__aenter__()
+        await self._cdp.call("Page.enable")
+        await self._cdp.call("Accessibility.enable")
+
+    async def call(self, method: str, timeout: float = 15.0, **params) -> dict:
+        """One DevTools command with automatic session recovery."""
+        if self._cdp is None:
+            raise BrowserError("no open tab; call open() first")
+        try:
+            return await self._cdp.call(method, timeout=timeout, **params)
+        except BrowserError as exc:
+            if "not attached" not in str(exc).lower():
+                raise
+            await self.reconnect()
+            return await self._cdp.call(method, timeout=timeout, **params)
 
     async def wait_settled(self) -> None:
         """Bounded wait for the document to stop churning after an action."""
