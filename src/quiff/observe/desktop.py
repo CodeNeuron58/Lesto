@@ -125,6 +125,8 @@ class DesktopObserver:
         self._root_hwnd: int | None = None
         self._baseline: set[int] = set()
         self._launched = False
+        self._launch_deadline = 0.0
+        self._reattached = False
 
     async def open(self, argv: list[str], *, cwd: str | None = None) -> ActionTable:
         """Start a program, wait for its window, and read it.
@@ -144,6 +146,8 @@ class DesktopObserver:
                 argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             self._pid = self._process.pid
+            self._launch_deadline = time.monotonic() + 15.0
+            self._reattached = False
             self._hwnd = await self._wait_for_new_window(before)
             self._pid = _pid_of(self._hwnd)
             self._root_hwnd = self._hwnd
@@ -269,11 +273,33 @@ class DesktopObserver:
         Single-process apps (Notepad on Windows 11) put every window in one
         process, including windows the USER opens while we run. Process id is
         therefore not a safety boundary; ownership is. Only the window we
-        launched and its owned dialogs are ever read or acted on.
+        launched and its owned dialogs are ever read or acted on. One guarded
+        exception: if the launched window destroys itself during startup
+        (Store apps sometimes recreate their window), re-attach to the newest
+        same-process window — but only within 15 seconds of the launch, and
+        never again after that.
         """
         root = self._root_hwnd
         if root is None or not user32.IsWindow(root):
-            raise DesktopError("our window is gone")
+            if (
+                self._launched
+                and self._pid
+                and time.monotonic() < self._launch_deadline
+                and not self._reattached
+            ):
+                fresh = [
+                    w
+                    for w in _top_windows_of_pid(self._pid)
+                    if w not in self._baseline and _window_title(w).strip()
+                ]
+                if fresh:
+                    self._root_hwnd = self._hwnd = fresh[-1]
+                    self._reattached = True
+                    root = self._root_hwnd
+                else:
+                    raise DesktopError("our window is gone (none reappeared)")
+            else:
+                raise DesktopError("our window is gone")
         if user32.IsWindowVisible(root) and _pid_of(root) == self._pid:
             front = user32.GetForegroundWindow()
             if front == root or _owner_of(front) == root:
@@ -364,10 +390,13 @@ class DesktopObserver:
         return rows
 
     def find_row_element(self, target: dict):
-        """Re-find one row's live element for acting: by AutomationId, else name + type."""
-        if self._hwnd is None:
-            raise DesktopError("no window attached")
-        window = uia.ElementFromHandle(self._hwnd)
+        """Re-find one row's live element for acting: by AutomationId, else name + type.
+
+        Uses the window as of NOW — after a dialog closes, the cached handle
+        would be dead and re-found elements would be useless shells.
+        """
+        hwnd = self._current_window()
+        window = uia.ElementFromHandle(hwnd)
         automation_id = target.get("automation_id") or ""
         if automation_id:
             condition = uia.CreatePropertyCondition(UIA.UIA_AutomationIdPropertyId, automation_id)

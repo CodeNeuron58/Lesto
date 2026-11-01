@@ -193,10 +193,11 @@ def decision_prompt(goal: str, subgoal: str, table: ActionTable,
         f"Result of the last action: {last}\n\n"
         "Reply with JSON only: pick ONE next action. 'click'/'type'/'select' need a row "
         "number from the table; 'type' fills 'values' with the text; 'press' puts the key "
-        "in 'values' (e.g. [\"Enter\"]); 'wait' if the screen must settle; 'done' when the "
-        "subgoal is complete; 'answer' puts the final answer in 'answer'. Judge whether "
-        "the last step worked (last_step_ok) and whether the subgoal is done "
-        "(subgoal_done). Set confidence between 0 and 1."
+        "in 'values' (e.g. [\"Enter\"]); 'wait' ONLY while an action is clearly still in "
+        "progress; 'done' when the subgoal is complete; 'answer' puts the final answer in "
+        "'answer'. Judge whether the last step worked (last_step_ok) and whether the "
+        "subgoal is done (subgoal_done). Set confidence between 0 and 1. "
+        "If the table already shows what you need for the next action, act — do not wait."
     )
 
 
@@ -208,9 +209,11 @@ class MuseDecider:
     in a worker thread and the loop stays responsive.
     """
 
-    def __init__(self, client: ChatClient | None = None, effort: str = "minimal") -> None:
+    def __init__(self, client: ChatClient | None = None, effort: str = "minimal",
+                 max_tokens: int = 2048) -> None:
         self.client = client or muse_spark()
         self.effort = effort
+        self.max_tokens = max_tokens
 
     async def decide(self, goal, subgoal, table: ActionTable, history):
         import asyncio
@@ -218,7 +221,7 @@ class MuseDecider:
         prompt = decision_prompt(goal, subgoal, table, history)
         parsed, reply = await asyncio.to_thread(
             self.client.structured, prompt, DECISION_SCHEMA, name="decision",
-            effort=self.effort, max_tokens=2048,
+            effort=self.effort, max_tokens=self.max_tokens,
         )
         action = parsed.get("action", "done")
         row = parsed.get("row")

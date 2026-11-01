@@ -8,7 +8,7 @@ replay and frontier rescue plug into the same step order.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Sequence
 
 from .act import ActResult, act, needs_approval
@@ -92,6 +92,7 @@ class FastLoop:
         stop_reason = "max steps reached"
         success = False
         waits = 0
+        consecutive_waits = 0
         force_rescue = False
 
         for step_no in range(1, self.max_steps + 1):
@@ -99,11 +100,15 @@ class FastLoop:
             decision = await self.decider.decide(goal, subgoal or "", table, history)
             decide_ms = int((time.perf_counter() - decide_start) * 1000)
 
+            if decision.action != "wait":
+                consecutive_waits = 0
             if force_rescue or decision.confidence < LOW_CONFIDENCE:
                 if self.rescuer is not None:
                     try:
                         decision = await self.rescuer.decide(goal, subgoal or "", table, history)
-                        decision.note = f"{decision.note} · rescued".strip(" ·")
+                        decision = replace(
+                            decision, note=f"{decision.note} · rescued".strip(" ·")
+                        )
                     except Exception as exc:
                         decision = Decision(action="done", subgoal_done=False, confidence=0.0,
                                             note=f"rescuer failed: {exc}")
@@ -111,16 +116,27 @@ class FastLoop:
 
             if decision.action == "wait":
                 # The decider expects a screen that isn't there yet (a dialog
-                # still building); re-observe instead of acting.
+                # still building); re-observe instead of acting. Past the
+                # budget, keep asking the rescuer to act instead of wait.
                 waits += 1
-                if waits > MAX_WAITS:
-                    stop_reason = "waited too long for the expected screen"
+                consecutive_waits += 1
+                if waits > MAX_WAITS and self.rescuer is not None:
+                    try:
+                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision = replace(
+                            decision, note=f"{decision.note} · rescued".strip(" ·")
+                        )
+                    except Exception as exc:
+                        decision = Decision(action="done", subgoal_done=False, confidence=0.0,
+                                            note=f"rescuer failed: {exc}")
+                if decision.action == "wait":
                     self._log(step_no, decision, None, table, decide_ms, observe_ms)
-                    break
-                self._log(step_no, decision, None, table, decide_ms, observe_ms)
-                await self.observer.wait_settled()
-                table = await self.observer.read()
-                continue
+                    if waits > 2 * MAX_WAITS:
+                        stop_reason = "waited too long for the expected screen"
+                        break
+                    await self.observer.wait_settled()
+                    table = await self.observer.read()
+                    continue
 
             if decision.action == "done":
                 success = bool(decision.subgoal_done is not False)

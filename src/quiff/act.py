@@ -251,7 +251,7 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         _press_combo(observer, combo)
         return ActResult(ok=True, detail=f"pressed {combo}")
 
-    if decision.action in ("done", "answer"):
+    if decision.action in ("done", "answer", "wait"):
         return ActResult(ok=True, detail=decision.action)
 
     row = table.by_index(decision.row) if decision.row is not None else None
@@ -285,12 +285,15 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         text = " ".join(decision.values)
         value = _pattern(element, "Value")
         if value is not None:
-            for _ in range(3):
+            for _ in range(2):
                 try:
                     value.SetValue(text)
                     time.sleep(0.1)
-                    if (value.Value or "") == text:
-                        return ActResult(ok=True, detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"")
+                    if _normalized(_read_value(value)) == " ".join(text.split()):
+                        return ActResult(
+                            ok=True,
+                            detail=f"set value of [{decision.row}] {row.role} \"{row.name}\"",
+                        )
                 except Exception:
                     pass
         element.SetFocus()
@@ -300,6 +303,25 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
 
     return ActResult(ok=False, detail=f"unknown action {decision.action!r}")
+
+
+def _read_value(pattern) -> str | None:
+    """Read a Value pattern's current text; comtypes exposes it as .value on
+    some interfaces and CurrentValue on others."""
+    for attr in ("CurrentValue", "value"):
+        try:
+            current = getattr(pattern, attr)
+        except AttributeError:
+            continue
+        return current if isinstance(current, str) else None
+    try:
+        return pattern.GetCurrentValue()
+    except Exception:
+        return None
+
+
+def _normalized(text: str | None) -> str:
+    return " ".join((text or "").split())
 
 
 def _pattern(element, name: str):
@@ -403,4 +425,4 @@ def _send_unicode(char: str) -> None:
     _send_input(item)
     item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
     _send_input(item)
-    time.sleep(0.015)  # without a beat, Windows drops rapid unicode events
+    time.sleep(0.025)  # without a beat, Windows drops rapid unicode events

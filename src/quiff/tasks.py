@@ -123,7 +123,9 @@ class TaskRun:
 
     @property
     def success(self) -> bool:
-        return self.loop.success and all(result.ok for result in self.checks)
+        # The checks are the referee: the task passed iff its automatic
+        # checks pass. The loop's own "done" is information, not the verdict.
+        return bool(self.checks) and all(result.ok for result in self.checks)
 
 
 def desktop_argv(task: Task) -> list[str]:
@@ -167,7 +169,15 @@ async def run_task(
         from quiff.observe.desktop import DesktopObserver
 
         await observer.open(desktop_argv(task), cwd=str(sandbox))
-        result = await loop.run(task.goal, subgoal=task.goal)
+        # A human doing the task knows their own folder — and knows that
+        # saving into it means typing the full path in the Save dialog.
+        # Tell the agent the same thing.
+        desktop_goal = (
+            f"{task.goal} (The task folder is: {sandbox}. When a Save dialog "
+            f"appears, type the file's FULL path — folder and name together, "
+            f"e.g. {sandbox}\filename.txt — into the File name box.)"
+        )
+        result = await loop.run(desktop_goal, subgoal=desktop_goal)
     page = ObserverPage(observer) if task.app == "chrome" else None
     checks = await run_checks(
         task.checks,
