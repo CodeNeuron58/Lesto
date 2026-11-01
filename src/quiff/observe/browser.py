@@ -39,8 +39,10 @@ ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
     "slider": ("click", "type"),
     "spinbutton": ("click", "type"),
 }
-# Roles that stay useful without a name; everything else is dropped when unnamed.
-UNNAMED_OK = {"textbox", "searchbox", "combobox", "slider", "spinbutton"}
+# Roles that stay useful without a name; everything else is dropped when
+# unnamed. Bare checkboxes and radios are common and perfectly clickable.
+UNNAMED_OK = {"textbox", "searchbox", "combobox", "slider", "spinbutton",
+              "checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"}
 
 
 class BrowserError(RuntimeError):

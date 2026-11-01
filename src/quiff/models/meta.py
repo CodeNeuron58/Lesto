@@ -161,12 +161,12 @@ def muse_spark_open() -> ChatClient:
 
 
 # The decision schema: one request answers all four questions (and batches rows).
-def decision_schema(allow_wait: bool = True) -> dict:
-    """Desktop deciders get no 'wait': timing is the driver's job, and models
-    abuse waiting to stall. Browser deciders keep it for page loads."""
+def decision_schema(allow_wait: bool = True, allow_navigate: bool = True) -> dict:
+    """Desktop deciders get no 'wait' (timing is the driver's job) and no
+    'navigate' (desktop apps have no address bar). Browser deciders get both."""
     actions = ["click", "type", "select", "press"] + (
         ["wait"] if allow_wait else []
-    ) + ["save_as", "done", "answer"]
+    ) + (["navigate"] if allow_navigate else []) + ["save_as", "done", "answer"]
     schema = json.loads(json.dumps(DECISION_SCHEMA))
     schema["properties"]["action"]["enum"] = actions
     return schema
@@ -206,7 +206,8 @@ def decision_prompt(goal: str, subgoal: str, table: ActionTable,
         f"Result of the last action: {last}\n\n"
         "Reply with JSON only: pick ONE next action. 'click'/'type'/'select' need a row "
         "number from the table; 'type' fills 'values' with the text; 'press' puts the key "
-        "in 'values' (e.g. [\"Enter\"]); 'save_as' is for saving the current document: put "
+        "in 'values' (e.g. [\"Enter\"]); 'navigate' puts the full URL in 'values' and "
+        "goes there directly (browser only); 'save_as' is for saving the current document: put "
         "the complete destination path in 'values' (e.g. [\"C:\\folder\\file.txt\"]) and "
         "the driver opens the menu and dialog itself; 'wait' ONLY while an action is "
         "clearly still in progress; 'done' when the subgoal is complete; 'answer' puts "
@@ -225,11 +226,13 @@ class MuseDecider:
     """
 
     def __init__(self, client: ChatClient | None = None, effort: str = "minimal",
-                 max_tokens: int = 2048, allow_wait: bool = True) -> None:
+                 max_tokens: int = 2048, allow_wait: bool = True,
+                 allow_navigate: bool = True) -> None:
         self.client = client or muse_spark()
         self.effort = effort
         self.max_tokens = max_tokens
         self.allow_wait = allow_wait
+        self.allow_navigate = allow_navigate
 
     async def decide(self, goal, subgoal, table: ActionTable, history,
                      last_result: str | None = None):
@@ -237,7 +240,7 @@ class MuseDecider:
 
         prompt = decision_prompt(goal, subgoal, table, history, last_result)
         parsed, reply = await asyncio.to_thread(
-            self.client.structured, prompt, decision_schema(self.allow_wait),
+            self.client.structured, prompt, decision_schema(self.allow_wait, self.allow_navigate),
             name="decision", effort=self.effort, max_tokens=self.max_tokens,
         )
         action = parsed.get("action", "done")

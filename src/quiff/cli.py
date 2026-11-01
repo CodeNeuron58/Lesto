@@ -78,11 +78,13 @@ async def _dispatch(args: argparse.Namespace) -> None:
         else:
             from quiff.models.meta import MuseDecider
 
-            rescuer = MuseDecider(effort="high", max_tokens=4096, allow_wait=False)
+            rescuer = MuseDecider(effort="high", max_tokens=8192, allow_wait=False,
+                                  allow_navigate=False)
             decider = FlowRecorder(
-                MuseDecider(effort=args.effort, allow_wait=False), task.id, task.goal
+                MuseDecider(effort=args.effort, allow_wait=False, allow_navigate=False),
+                task.id, task.goal,
             )
-            print(f"brain    MuseDecider ({args.effort}, no wait) + rescue on high")
+            print(f"brain    MuseDecider ({args.effort}, no wait/navigate) + rescue on high")
         if task.app == "chrome":
             from quiff.observe.browser import BrowserObserver
 

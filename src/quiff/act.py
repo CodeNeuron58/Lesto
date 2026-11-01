@@ -138,6 +138,13 @@ async def _act_browser(observer: BrowserObserver, table: ActionTable, decision: 
                 return ActResult(ok=False, detail=f"text did not land in [{decision.row}] {row.name!r}")
         return ActResult(ok=True, detail=f"typed into [{decision.row}] {row.role} \"{row.name}\"")
 
+    if decision.action == "navigate":
+        url = " ".join(decision.values).strip()
+        if not url:
+            return ActResult(ok=False, detail="navigate without a URL")
+        await observer.goto(url)
+        return ActResult(ok=True, detail=f"navigated to {url}")
+
     if decision.action == "select":
         option = " ".join(decision.values)
         matched = await _select_option(cdp, row, option)

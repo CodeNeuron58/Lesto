@@ -13,7 +13,8 @@ from typing import Protocol, Sequence
 
 from .observe.table import ActionTable
 
-ACTIONS = ("click", "type", "select", "press", "save_as", "done", "answer", "wait")
+ACTIONS = ("click", "type", "select", "press", "navigate", "save_as", "done",
+           "answer", "wait")
 
 
 @dataclass(frozen=True)
