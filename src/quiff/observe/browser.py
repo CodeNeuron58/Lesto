@@ -46,7 +46,7 @@ MAX_TABLE_ROWS = 250
 """Cua caps candidates at 24, jev at 250 — beyond this the model wanders."""
 
 
-CONSENT_LABEL = re.compile(r"\b(accept|agree|consent|ok|allow|got it)\b", re.I)
+CONSENT_LABEL = re.compile(r"\b(accept|agree|consent|ok|allow|got it|reject|decline|deny|manage)\b", re.I)
 
 
 RISKY_DIALOG = re.compile(r"(delete|remove|confirm|permanently|send|pay)", re.I)
@@ -176,6 +176,16 @@ class CDPConnection:
                     self._event_arrived.notify_all()
 
     async def call(self, method: str, timeout: float = 15.0, **params) -> dict:
+        assert self._ws
+        self._next_id += 1
+        try:
+            return await self._call_inner(method, timeout, **params)
+        except websockets.WebSocketException as exc:
+            # real drops surface as websockets errors, not BrowserError —
+            # normalize so the reconnect machinery can see them
+            raise BrowserError(str(exc)) from None
+
+    async def _call_inner(self, method: str, timeout: float = 15.0, **params) -> dict:
         assert self._ws
         self._next_id += 1
         call_id = self._next_id
@@ -539,19 +549,26 @@ class BrowserObserver:
         except (ValueError, AttributeError):
             pass
         try:
-            snap = await self._cdp.call("DOMSnapshot.captureSnapshot", timeout=15.0)
+            # computedStyles=[] is REQUIRED on current Chrome or the call is
+            # rejected with Invalid parameters (probed on Chrome 156)
+            snap = await self._cdp.call("DOMSnapshot.captureSnapshot",
+                                        computedStyles=[], timeout=15.0)
         except BrowserError:
             return {}, (view["width"], view["height"])
         bounds: dict[int, tuple[int, int, int, int]] = {}
         for doc in snap.get("documents", []):
             layout = doc.get("layout", {})
+            node_index = layout.get("nodeIndex", [])
             node_bounds = layout.get("bounds", [])
             backend_ids = (doc.get("nodes", {}) or {}).get("backendNodeId", [])
-            for i, backend_id in enumerate(backend_ids):
-                if i < len(node_bounds):
+            # bounds are indexed by layout.nodeIndex, which is NOT the list
+            # position of backendNodeId — join through nodeIndex (probed:
+            # positional zip misassigned 4 of 5 bounds)
+            for i, ni in enumerate(node_index):
+                if i < len(node_bounds) and ni < len(backend_ids):
                     b = node_bounds[i]
                     if isinstance(b, list) and len(b) >= 4:
-                        bounds[backend_id] = (b[0], b[1], b[2], b[3])
+                        bounds[backend_ids[ni]] = (b[0], b[1], b[2], b[3])
         return bounds, (view["width"], view["height"])
 
     async def _page_key(self) -> str | None:

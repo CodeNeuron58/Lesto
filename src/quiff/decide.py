@@ -47,7 +47,8 @@ class Decision:
 
 class Decider(Protocol):
     async def decide(
-        self, goal: str, subgoal: str, table: ActionTable, history: Sequence["Decision"]
+        self, goal: str, subgoal: str, table: ActionTable, history: Sequence["Decision"],
+        last_result: str | None = None, progress: str | None = None,
     ) -> Decision: ...
 
 

@@ -34,8 +34,12 @@ class ActResult:
 
 def needs_approval(decision: Decision, table: ActionTable) -> str | None:
     """Why this decision needs a human's approval, or None if it is routine."""
+    if decision.action == "download":
+        # the model chose where to write on disk — always a human decision
+        return "download to " + (" ".join(decision.values) or "an unspecified path")
     if decision.action == "press":
-        key = " ".join(decision.values).lower()
+        key = "+".join(part.strip() for part in
+                       " ".join(decision.values).split("+") if part.strip()).lower()
         if any(key.endswith(risky) for risky in RISKY_KEYS):
             return f"keyboard shortcut {key}"
         return None
@@ -392,9 +396,10 @@ def _act_desktop(observer, table: ActionTable, decision: Decision) -> ActResult:
         time.sleep(0.4)
         after = observer.current_hwnd()
         if after != before:
+            from .observe.desktop import _window_title
             return ActResult(ok=True,
                              detail=f"pressed {combo} — a new window opened "
-                                    f"('{observer._window_title_safe(after)}')")
+                                    f"('{_window_title(after)}')")
         return ActResult(ok=True, detail=f"pressed {combo}")
 
     if decision.action in ("done", "answer", "wait"):
@@ -570,11 +575,16 @@ def _send_key(vk: int, keyup: bool = False) -> None:
 
 
 def _send_unicode(char: str) -> None:
-    item = _INPUT(type=INPUT_KEYBOARD)
-    item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE)
-    _send_input(item)
-    item.ki = _KEYBDINPUT(wScan=ord(char), dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
-    _send_input(item)
+    units = [ord(char)]
+    if 0x10000 <= ord(char) <= 0x10FFFF:  # astral plane: send the UTF-16 pair
+        code = ord(char) - 0x10000
+        units = [0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF)]
+    for unit in units:
+        item = _INPUT(type=INPUT_KEYBOARD)
+        item.ki = _KEYBDINPUT(wScan=unit, dwFlags=KEYEVENTF_UNICODE)
+        _send_input(item)
+        item.ki = _KEYBDINPUT(wScan=unit, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)
+        _send_input(item)
     time.sleep(0.025)  # without a beat, Windows drops rapid unicode events
 
 

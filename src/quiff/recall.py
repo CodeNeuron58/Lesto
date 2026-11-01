@@ -79,7 +79,7 @@ class FlowRecorder:
         last_result: str | None = None, progress: str | None = None,
     ) -> Decision:
         decision = await self.inner.decide(goal, subgoal, table, history,
-                                           last_result=last_result)
+                                           last_result=last_result, progress=progress)
         row = table.by_index(decision.row) if decision.row is not None else None
         if decision.action in ("click", "type", "select") and row is not None:
             # NOTE: flow files hold real typed values (replay must reproduce

@@ -53,7 +53,7 @@ def test_consent_wall_collapses_to_accept_buttons():
         ActionRow(4, "link", "Some page", ("click",), True),
     )
     collapsed = _collapse_consent_walls(list(rows))
-    assert [r.name for r in collapsed] == ["Accept all cookies"]
+    assert [r.name for r in collapsed] == ["Accept all cookies", "Reject"]
 
 
 def test_off_site_links_demote_to_end():
