@@ -20,6 +20,7 @@ from .verify import LoopDetector
 
 MAX_STEPS = 25
 MAX_WAITS = 5
+LOW_CONFIDENCE = 0.5
 
 
 @dataclass
@@ -91,11 +92,22 @@ class FastLoop:
         stop_reason = "max steps reached"
         success = False
         waits = 0
+        force_rescue = False
 
         for step_no in range(1, self.max_steps + 1):
             decide_start = time.perf_counter()
             decision = await self.decider.decide(goal, subgoal or "", table, history)
             decide_ms = int((time.perf_counter() - decide_start) * 1000)
+
+            if force_rescue or decision.confidence < LOW_CONFIDENCE:
+                if self.rescuer is not None:
+                    try:
+                        decision = await self.rescuer.decide(goal, subgoal or "", table, history)
+                        decision.note = f"{decision.note} · rescued".strip(" ·")
+                    except Exception as exc:
+                        decision = Decision(action="done", subgoal_done=False, confidence=0.0,
+                                            note=f"rescuer failed: {exc}")
+                force_rescue = False
 
             if decision.action == "wait":
                 # The decider expects a screen that isn't there yet (a dialog
@@ -135,18 +147,24 @@ class FastLoop:
             if not result.ok:
                 failed_acts += 1
                 if failed_acts >= 2:
-                    # The frontier rescuer takes this over once the model client lands.
-                    stop_reason = f"acting failed twice: {result.detail}"
-                    success = False
-                    break
+                    if self.rescuer is not None:
+                        force_rescue = True  # the frontier model picks the next step
+                        failed_acts = 0
+                    else:
+                        stop_reason = f"acting failed twice: {result.detail}"
+                        success = False
+                        break
             else:
                 failed_acts = 0
 
             ref = table.by_index(decision.row).ref if decision.row else decision.action
             if detector.check(decision.action, ref or "", table.title):
-                stop_reason = "loop detected: same action on the same screen"
-                success = False
-                break
+                if self.rescuer is not None:
+                    force_rescue = True
+                else:
+                    stop_reason = "loop detected: same action on the same screen"
+                    success = False
+                    break
 
             observe_start = time.perf_counter()
             await self.observer.wait_settled()
