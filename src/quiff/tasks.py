@@ -20,6 +20,7 @@ from .learn import StepLogger
 from .loop import FastLoop, LoopResult
 from .observe.browser import BrowserObserver, BrowserError
 from .recall import FlowRecorder
+from . import skills as app_skills
 
 TASKS_FILE = Path(__file__).resolve().parent.parent.parent / "tasks" / "tasks.toml"
 
@@ -177,6 +178,12 @@ async def run_task(
     loop = FastLoop(observer, decider, logger, max_steps=max_steps, rescuer=rescuer,
                     approver=approver, verify_after_done=verify_after_done)
     subgoal = "; ".join(planned) if planned else task.goal
+    # the app's skill file rides along on every decision: written knowledge
+    # of how this app exposes itself, its shared flows, and its quirks
+    skill_text = app_skills.load(task.app)
+    if skill_text:
+        subgoal = (subgoal + f"\n\nApp guidance for {task.app} "
+                   f"(how this app works):\n{skill_text}")
     if task.app == "chrome":
         result = await loop.run(task.goal, start_url=_start_url(task), subgoal=subgoal)
     else:
@@ -184,22 +191,12 @@ async def run_task(
 
         await observer.open(desktop_argv(task), cwd=str(sandbox))
         # A human doing the task knows their own folder; tell the agent too.
-        # The Save-dialog hint is only relevant for tasks that actually save.
         desktop_goal = f"{task.goal} (The task folder is: {sandbox})"
-        if "save" in task.goal.lower():
-            desktop_goal += (
-                " When a Save dialog appears, type the file's FULL path — "
-                f"folder and name together, e.g. {sandbox}/filename.txt — "
-                "into the File name box."
-            )
-        if "rename" in task.goal.lower():
-            desktop_goal += (
-                " Note: Explorer may hide file extensions — a rename can "
-                "produce a doubled name like final.txt.txt. If a listed file's "
-                "name looks doubled, rename it again typing only the base name."
-            )
         if planned:
             desktop_goal = desktop_goal + " Subgoals: " + "; ".join(planned)
+        if skill_text:
+            desktop_goal = (desktop_goal + f"\n\nApp guidance for {task.app} "
+                            f"(how this app works):\n{skill_text}")
         result = await loop.run(desktop_goal, subgoal=desktop_goal)
     page = ObserverPage(observer) if task.app == "chrome" else None
     if page is not None:
