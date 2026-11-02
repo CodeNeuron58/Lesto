@@ -423,7 +423,13 @@ class BrowserObserver:
             f"--user-data-dir={self._user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-features=Translate,MediaRouter",
+            "--disable-features=Translate,MediaRouter,CalculateNativeWinOcclusion",
+            # Cua's documented launch flags: background/occluded tabs get
+            # renderer-suspended, which breaks synthetic input and reads on
+            # warm tabs — the 'click succeeded, nothing happened' failure mode
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--proxy-bypass-list=<-loopback>",  # local test targets skip the system proxy
             "--mute-audio",
             f"--window-size={self.window_size.replace(',', 'x')}",
         ]

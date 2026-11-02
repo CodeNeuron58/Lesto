@@ -107,16 +107,26 @@ async def race(runs: int) -> dict:
         from quiff.observe.browser import BrowserObserver
 
         client = muse_spark()
-        observer = BrowserObserver(headless=True)
-        try:
-            for i in range(runs):
+        # a FRESH browser per run: identical conditions for every mode and
+        # every run — the warm-tab input quirk (documented) can't skew it
+        for i in range(runs):
+            observer = BrowserObserver(headless=True)
+            try:
                 results.append(await slow_run(client, observer, task))
-            for i in range(runs):
+            finally:
+                await observer.stop()
+        for i in range(runs):
+            observer = BrowserObserver(headless=True)
+            try:
                 results.append(await quiff_run(observer, task))
-            for i in range(runs):
+            finally:
+                await observer.stop()
+        for i in range(runs):
+            observer = BrowserObserver(headless=True)
+            try:
                 results.append(await replay_run(observer, task))
-        finally:
-            await observer.stop()
+            finally:
+                await observer.stop()
     finally:
         server.shutdown()
     return results
