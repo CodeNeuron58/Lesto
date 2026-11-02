@@ -480,42 +480,37 @@ class BrowserObserver:
         return await self.target_info()
 
     async def _settle(self) -> None:
-        """Wait for the page to go still: readyState complete, no pending
-        resource requests, and a beat without DOM mutations.
-
-        One JS evaluation answers all three (Browser Use's pending-request
-        poll + jev-ra's MutationObserver stillness, converged). Bounded.
+        """Wait until the page reports itself ready: load complete and no
+        pending resource requests. Evidence-based and fast — the old version
+        also required DOM stillness, which animated pages never reach, so
+        every step burned the full budget while waiting for a stillness that
+        dynamic pages don't have. Bounded at 1.5 s; the page_key guard and
+        the wait budget catch anything this returns early on.
         """
         assert self._cdp
         expression = (
             "(async () => {"
             "  const t0 = performance.now();"
-            "  let lastMut = performance.now();"
-            "  const obs = new MutationObserver(() => { lastMut = performance.now(); });"
-            "  obs.observe(document, {subtree: true, childList: true, attributes: true,"
-            "   characterData: true});"
-            "  while (performance.now() - t0 < 2500) {"
+            "  while (performance.now() - t0 < 1200) {"
             "    const ready = document.readyState === 'complete';"
             "    const pending = performance.getEntriesByType('resource')"
             "      .filter(r => r.responseEnd === 0 &&"
             "        !/analytics|ads|doubleclick|googlesyndication/.test(r.name) &&"
             "        performance.now() - r.startTime < 10000).length;"
-            "    const still = performance.now() - lastMut > 120;"
-            "    if (ready && pending === 0 && still) { obs.disconnect();"
-            "      return 'settled'; }"
+            "    if (ready && pending === 0) return 'ready';"
             "    await new Promise(r => setTimeout(r, 100));"
             "  }"
-            "  obs.disconnect(); return 'budget';"
+            "  return 'budget';"
             "})()"
         )
-        deadline = time.monotonic() + 8.0
+        deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             try:
                 await self._cdp.call(
                     "Runtime.evaluate", expression=expression,
-                    awaitPromise=True, returnByValue=True, timeout=8.0,
+                    awaitPromise=True, returnByValue=True, timeout=4.0,
                 )
-                return  # settled or budget-exhausted
+                return  # ready or budget-exhausted
             except BrowserError as exc:
                 # a navigation destroyed the page context mid-wait: ask again
                 # in the new document, until the deadline

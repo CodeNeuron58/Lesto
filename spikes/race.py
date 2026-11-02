@@ -144,10 +144,11 @@ async def _loop_run(observer, decider, task, mode: str, rescuer=None) -> dict:
     if not all(c.ok for c in checks):
         print(f"    [{mode}] check details: " +
               "; ".join(f"{c.check_type}={c.ok}:{c.detail[:60]}" for c in checks))
+    model_calls = 0 if mode == "replay" else result.steps
     return {"mode": mode,
             "success": bool(all(c.ok for c in checks)),
             "elapsed_s": round(time.perf_counter() - started, 2),
-            "model_calls": result.steps, "steps": result.steps}
+            "model_calls": model_calls, "steps": result.steps}
 
 
 async def quiff_run(observer, task) -> dict:
